@@ -1,0 +1,2 @@
+-keep class com.google.firebase.iid.** { *; }
+-dontwarn com.google.firebase.iid.**

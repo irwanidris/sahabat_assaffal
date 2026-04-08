@@ -1,0 +1,37 @@
+flutter_native_splash:
+  # Background color for the splash screen
+  color: "#667eea"
+  
+  # Optional gradient background (from your app's theme)
+  # Using solid color since gradient requires android 12+
+  color_dark: "#1a1a2e"
+  
+  # The image to display on the splash screen
+  image: assets/images/app_icon.png
+  
+  # Branding text/image at the bottom (optional)
+  # branding: assets/images/branding.png
+  
+  # Size of the splash image
+  image_dark: assets/images/app_icon.png
+  
+  # Android 12+ specific settings
+  android_12:
+    color: "#667eea"
+    color_dark: "#1a1a2e"
+    image: assets/images/app_icon.png
+    image_dark: assets/images/app_icon.png
+    icon_background_color: "#667eea"
+    icon_background_color_dark: "#1a1a2e"
+  
+  # Enable for iOS
+  ios: true
+  
+  # Enable for Android
+  android: true
+  
+  # Enable for Web
+  web: true
+  
+  # Full screen mode
+  fullscreen: true

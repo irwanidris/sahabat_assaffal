@@ -1,0 +1,30 @@
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/app_icon.png"
+  min_sdk_android: 23
+  
+  # Remove the alpha channel (transparency) for Android
+  remove_alpha_ios: true
+  
+  # Adaptive icon for Android (Android 8.0+)
+  adaptive_icon_background: "#667eea"
+  adaptive_icon_foreground: "assets/images/app_icon.png"
+  
+  # Web favicon
+  web:
+    generate: true
+    image_path: "assets/images/app_icon.png"
+    background_color: "#667eea"
+    theme_color: "#667eea"
+  
+  # Windows icon
+  windows:
+    generate: true
+    image_path: "assets/images/app_icon.png"
+    icon_size: 48
+  
+  # macOS icon
+  macos:
+    generate: true
+    image_path: "assets/images/app_icon.png"
