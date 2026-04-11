@@ -99,32 +99,6 @@ class FloatingHeader extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(width: 12),
-
-                      // Theme toggle
-                      BlocBuilder<ThemeCubit, ThemeState>(
-                        builder: (context, state) {
-                          return GestureDetector(
-                            onTap: () => context.read<ThemeCubit>().toggleTheme(),
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: isDarkMode
-                                    ? Colors.grey.shade800
-                                    : Colors.grey.shade200,
-                                borderRadius: BorderRadius.circular(50),
-                              ),
-                              child: Icon(
-                                state.isDark ? Icons.wb_sunny : Icons.dark_mode,
-                                size: 18,
-                                color: state.isDark
-                                    ? Colors.amber
-                                    : Colors.grey.shade700,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
                     ],
                   ),
                 ],

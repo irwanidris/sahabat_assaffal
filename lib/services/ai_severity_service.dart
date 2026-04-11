@@ -12,7 +12,8 @@ class AISeverityService {
 
   Future<void> initialize() async {
     if (_imageLabeler == null) {
-      final options = ImageLabelerOptions(confidenceThreshold: 0.4);
+      // Tingkatkan tahap keyakinan minimum kepada 0.5 untuk mengurangkan laporan palsu
+      final options = ImageLabelerOptions(confidenceThreshold: 0.5);
       _imageLabeler = ImageLabeler(options: options);
     }
   }
@@ -75,9 +76,8 @@ class AISeverityService {
     );
   }
 
-  // Pengesahan Imej yang lebih fleksibel mengikut Kategori
+  // Pengesahan Imej yang lebih ketat mengikut Kategori
   Future<ValidationResult> validateImageByCategory(File imageFile, String category) async {
-    // JIKA KATEGORI ADALAH 'Lain-lain', KITA KOSONGKAN SEBARANG SEKATAN (RESTRICTION)
     if (category == 'Lain-lain') {
       return ValidationResult(
         isValid: true,
@@ -91,47 +91,77 @@ class AISeverityService {
       final inputImage = InputImage.fromFile(imageFile);
       final labels = await _imageLabeler!.processImage(inputImage);
 
-      List<String> validKeywords = [];
+      List<String> contextKeywords = [];
+      List<String> damageKeywords = ['hole', 'damage', 'broken', 'hazard', 'crack', 'pitted', 'dent', 'cavity'];
       
-      if (category == 'Lubang Jalan' || category == 'Longkang Tersumbat') {
-        validKeywords = ['road', 'asphalt', 'pavement', 'street', 'concrete', 'water', 'drain', 'ground'];
+      if (category == 'Lubang Jalan') {
+        contextKeywords = ['road', 'asphalt', 'pavement', 'street', 'concrete', 'highway', 'tar'];
+      } else if (category == 'Longkang Tersumbat') {
+        contextKeywords = ['water', 'drain', 'gutter', 'ditch', 'flood', 'ground', 'culvert'];
       } else if (category == 'Lampu Jalan Padam') {
-        validKeywords = ['light', 'pole', 'sky', 'night', 'lamp', 'electricity', 'tower'];
+        contextKeywords = ['light', 'pole', 'lamp', 'electricity', 'tower', 'sky', 'night'];
       } else if (category == 'Sampah Sarap') {
-        validKeywords = ['trash', 'waste', 'plastic', 'bag', 'bottle', 'litter', 'ground', 'environment'];
+        contextKeywords = ['trash', 'waste', 'plastic', 'bag', 'bottle', 'litter', 'garbage'];
       } else if (category == 'Pokok Tumbang') {
-        validKeywords = ['tree', 'branch', 'wood', 'plant', 'leaf', 'nature', 'forest', 'road'];
+        contextKeywords = ['tree', 'branch', 'wood', 'plant', 'leaf', 'nature', 'log'];
       }
 
-      bool isValid = false;
+      bool hasContext = false;
+      bool hasDamage = false;
       String detectedAs = '';
 
       for (final label in labels) {
         final labelLower = label.label.toLowerCase();
-        for (final kw in validKeywords) {
-          if (labelLower.contains(kw)) {
-            isValid = true;
+        
+        // Semak konteks (cth: adakah ini jalan?)
+        for (final cw in contextKeywords) {
+          if (labelLower.contains(cw)) {
+            hasContext = true;
             detectedAs = label.label;
-            break;
           }
         }
-        if (isValid) break;
+        
+        // Semak kerosakan (cth: adakah ada lubang/rosak?)
+        for (final dw in damageKeywords) {
+          if (labelLower.contains(dw)) {
+            hasDamage = true;
+          }
+        }
       }
 
       if (labels.isEmpty) {
         return ValidationResult(
           isValid: false,
-          message: 'Imej terlalu kabur atau gelap untuk dikenal pasti.',
-          details: 'Sila ambil foto yang lebih jelas.',
+          message: 'Imej terlalu kabur atau tidak dapat dikenal pasti.',
+          details: 'Sila ambil foto yang lebih jelas dan dekat.',
         );
       }
 
-      if (!isValid) {
-        return ValidationResult(
-          isValid: false,
-          message: 'Imej ini tidak kelihatan seperti aduan $category.',
-          details: 'Pastikan subjek aduan nampak jelas dalam foto.',
-        );
+      // Syarat Khas untuk Lubang Jalan: Mesti ada konteks jalan DAN tanda kerosakan
+      if (category == 'Lubang Jalan') {
+        if (!hasContext) {
+          return ValidationResult(
+            isValid: false,
+            message: 'Imej ini tidak dikesan sebagai jalan raya.',
+            details: 'Pastikan gambar menunjukkan permukaan jalan dengan jelas.',
+          );
+        }
+        if (!hasDamage) {
+          return ValidationResult(
+            isValid: false,
+            message: 'Tiada kerosakan atau lubang dikesan dalam imej.',
+            details: 'AI tidak menemui tanda lubang. Sila pastikan lubang nampak jelas.',
+          );
+        }
+      } else {
+        // Untuk kategori lain, memadai jika ada konteks sahaja buat masa ini
+        if (!hasContext) {
+          return ValidationResult(
+            isValid: false,
+            message: 'Imej tidak sepadan dengan kategori $category.',
+            details: 'Sila pastikan subjek aduan nampak jelas.',
+          );
+        }
       }
 
       return ValidationResult(

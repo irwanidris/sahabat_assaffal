@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Security: Ignore config files containing API keys
+/lib/config/onesignal_config.dart

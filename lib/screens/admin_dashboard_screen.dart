@@ -1,8 +1,11 @@
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:intl/intl.dart'; // Tambah intl untuk format masa
+import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../cubit/reports_cubit.dart';
 import '../models/pothole_report.dart';
 import '../services/supabase_service.dart';
@@ -18,6 +21,7 @@ class AdminDashboardScreen extends StatefulWidget {
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final SupabaseService _supabaseService = SupabaseService();
   bool _isProcessing = false;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
@@ -28,7 +32,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   String _formatDateTime(DateTime date) {
-    // Menukarkan waktu UTC ke waktu tempatan Malaysia
     return DateFormat('d MMM yyyy, h:mm a').format(date.toLocal());
   }
 
@@ -44,12 +47,109 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  void _maximizePhoto(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              alignment: Alignment.topRight,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: InteractiveViewer(
+                    child: CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
+                      errorWidget: (context, url, error) => const Icon(Icons.error),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _updateStatus(PotholeReport report, String newStatus) async {
     if (_isProcessing) return;
     
-    setState(() => _isProcessing = true);
+    // Dapatkan ID & Nama Moderator semasa (cth: dari AuthService)
+    final currentUser = Supabase.instance.client.auth.currentUser;
+    final currentUserId = currentUser?.id;
+    final currentUserName = currentUser?.userMetadata?['full_name'] ?? 'Moderator';
+
+    // Logik Sekatan: Jika klik Selesai, pastikan dia yang memproses
+    if (newStatus == 'resolved' && report.status == 'processing') {
+      if (report.assignedTo != null && report.assignedTo != currentUserId) {
+        _showSnackBar('Aduan ini sedang diuruskan oleh ${report.assignedName ?? 'moderator lain'}.', isError: true);
+        return;
+      }
+    }
+
+    String? resolvedImageUrl;
+
+    if (newStatus == 'resolved') {
+      final source = await showModalBottomSheet<ImageSource>(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('Ambil Gambar Baru (Selesai)'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Pilih dari Galeri'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (source == null) return;
+
+      final XFile? pickedFile = await _picker.pickImage(
+        source: source,
+        imageQuality: 70,
+        maxWidth: 1080,
+      );
+
+      if (pickedFile == null) return;
+
+      setState(() => _isProcessing = true);
+      try {
+        resolvedImageUrl = await _supabaseService.uploadImage(File(pickedFile.path));
+      } catch (e) {
+        if (mounted) _showSnackBar('Gagal muat naik gambar: $e', isError: true);
+        setState(() => _isProcessing = false);
+        return;
+      }
+    } else {
+      setState(() => _isProcessing = true);
+    }
+
     try {
-      await _supabaseService.updateReportStatus(report.id, newStatus);
+      await _supabaseService.updateReportStatus(
+        report.id, 
+        newStatus, 
+        resolvedImageUrl: resolvedImageUrl,
+        assignedTo: newStatus == 'processing' ? currentUserId : (newStatus == 'resolved' ? report.assignedTo : null),
+        assignedName: newStatus == 'processing' ? currentUserName : (newStatus == 'resolved' ? report.assignedName : null),
+      );
+
       if (mounted) {
         await context.read<ReportsCubit>().refreshReports();
         String label = 'STATUS';
@@ -137,6 +237,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 final isProcessingStatus = report.status == 'processing';
                 final isPending = report.status == 'pending';
 
+                final currentUser = Supabase.instance.client.auth.currentUser;
+                final currentUserId = currentUser?.id;
+                
+                // Cek adakah saya yang sedang memproses?
+                final isMyTask = report.assignedTo == currentUserId;
+                final isAssignedToOther = isProcessingStatus && report.assignedTo != null && !isMyTask;
+
                 return Card(
                   elevation: 2,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -145,15 +252,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     children: [
                       ListTile(
                         contentPadding: const EdgeInsets.all(12),
-                        leading: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: CachedNetworkImage(
-                            imageUrl: report.imageUrl,
-                            width: 60,
-                            height: 60,
-                            fit: BoxFit.cover,
-                            placeholder: (context, url) => Container(color: Colors.grey[300], child: const Icon(Icons.image)),
-                            errorWidget: (context, url, error) => const Icon(Icons.image_not_supported),
+                        leading: GestureDetector(
+                          onTap: () => _maximizePhoto(report.imageUrl),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: CachedNetworkImage(
+                                  imageUrl: report.imageUrl,
+                                  width: 60,
+                                  height: 60,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(color: Colors.grey[300], child: const Icon(Icons.image)),
+                                  errorWidget: (context, url, error) => const Icon(Icons.image_not_supported),
+                                ),
+                              ),
+                              const Icon(Icons.zoom_in, color: Colors.white70, size: 20),
+                            ],
                           ),
                         ),
                         title: Text(report.areaName ?? 'Kawasan Tidak Diketahui', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -162,18 +278,32 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           children: [
                             const SizedBox(height: 2),
                             Text(report.category, style: TextStyle(color: AppTheme.primaryBlue, fontWeight: FontWeight.w600, fontSize: 11)),
+                            const SizedBox(height: 6),
+                            // INFO TAMBAHAN: PELAPOR & GPS
+                            Row(
+                              children: [
+                                const Icon(Icons.person, size: 12, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Expanded(child: Text('Oleh: ${report.reporterName ?? 'Anonym'}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold))),
+                              ],
+                            ),
                             const SizedBox(height: 4),
                             Row(
                               children: [
-                                Icon(Icons.access_time, size: 12, color: Colors.grey[600]),
+                                const Icon(Icons.gps_fixed, size: 12, color: Colors.grey),
                                 const SizedBox(width: 4),
-                                Text(
-                                  _formatDateTime(report.createdAt),
-                                  style: TextStyle(fontSize: 10, color: Colors.grey[600], fontWeight: FontWeight.w500),
-                                ),
+                                Text('${report.latitude.toStringAsFixed(5)}, ${report.longitude.toStringAsFixed(5)}', style: const TextStyle(fontSize: 10, color: Colors.indigo)),
                               ],
                             ),
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                const Icon(Icons.access_time, size: 12, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Text(_formatDateTime(report.createdAt), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
@@ -191,6 +321,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                 ),
                               ),
                             ),
+                            if (isProcessingStatus && report.assignedName != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  isMyTask ? 'Ditangani oleh Anda' : 'Oleh: ${report.assignedName}',
+                                  style: TextStyle(
+                                    fontSize: 9, 
+                                    color: isMyTask ? Colors.blue : Colors.red,
+                                    fontStyle: FontStyle.italic,
+                                    fontWeight: isMyTask ? FontWeight.bold : FontWeight.normal,
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                         trailing: IconButton(
@@ -206,28 +349,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           children: [
                             const Text('Status:', style: TextStyle(fontSize: 11, color: Colors.grey)),
                             const SizedBox(width: 8),
-                            // Butang PROSES
                             TextButton(
-                              onPressed: (isResolved || isPending) && !_isProcessing 
+                              onPressed: (isPending && !isAssignedToOther) && !_isProcessing 
                                   ? () => _updateStatus(report, 'processing') 
                                   : null,
                               style: TextButton.styleFrom(
                                 backgroundColor: isProcessingStatus ? Colors.blue.withOpacity(0.1) : null,
-                                foregroundColor: Colors.blue,
+                                foregroundColor: isAssignedToOther ? Colors.grey : Colors.blue,
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                                 minimumSize: const Size(0, 32),
                               ),
-                              child: const Text('PROSES', style: TextStyle(fontSize: 11)),
+                              child: Text(isAssignedToOther ? 'DIURUSKAN' : 'PROSES', style: const TextStyle(fontSize: 11)),
                             ),
                             const SizedBox(width: 8),
-                            // Butang SELESAI
                             ElevatedButton(
-                              onPressed: !isResolved && !_isProcessing 
+                              onPressed: (isProcessingStatus && isMyTask) && !_isProcessing 
                                   ? () => _updateStatus(report, 'resolved') 
                                   : null,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: isResolved ? Colors.green.withOpacity(0.1) : Colors.green,
-                                foregroundColor: isResolved ? Colors.green : Colors.white,
+                                backgroundColor: isResolved ? Colors.green.withOpacity(0.1) : (isAssignedToOther ? Colors.grey[300] : Colors.green),
+                                foregroundColor: isResolved ? Colors.green : (isAssignedToOther ? Colors.grey : Colors.white),
                                 elevation: 0,
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                                 minimumSize: const Size(0, 32),

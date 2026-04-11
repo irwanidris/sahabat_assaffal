@@ -1,8 +1,10 @@
 import 'dart:ui';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'config/supabase_config.dart';
 import 'theme/app_theme.dart';
 import 'cubit/theme_cubit.dart';
@@ -15,6 +17,9 @@ import 'screens/dashboard_screen.dart';
 import 'screens/admin_login_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/city_dashboard_screen.dart';
+import 'screens/profile_screen.dart';
+import 'screens/admin_chat_screen.dart';
+import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,6 +36,20 @@ void main() async {
   
   // Minta kebenaran notifikasi
   OneSignal.Notifications.requestPermission(true);
+
+  // Set tags berdasarkan metadata user jika sudah login
+  final user = Supabase.instance.client.auth.currentUser;
+  if (user != null) {
+    final bool isAdmin = user.userMetadata?['is_admin'] == true;
+    final bool isModerator = user.userMetadata?['is_moderator'] == true;
+    final bool isYB = user.userMetadata?['is_yb'] == true;
+    
+    if (isAdmin || isModerator || isYB) {
+      OneSignal.User.addTagWithKey("role", "admin_staff");
+    } else {
+      OneSignal.User.removeTag("role");
+    }
+  }
 
   runApp(const MyApp());
 }
@@ -95,13 +114,93 @@ class MainNavigation extends StatefulWidget {
 
 class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
+  final AuthService _authService = AuthService();
+  bool _hasNewChat = false;
+  StreamSubscription? _chatSubscription;
 
-  final List<Widget> _screens = const [
-    HomeScreen(),
-    ReportScreen(),
-    DashboardScreen(),
-    CityDashboardScreen(),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _setupChatListener();
+  }
+
+  @override
+  void dispose() {
+    _chatSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _setupChatListener() {
+    _chatSubscription = Supabase.instance.client
+        .from('admin_chats')
+        .stream(primaryKey: ['id'])
+        .order('created_at', ascending: false)
+        .limit(1)
+        .listen((data) {
+      if (data.isNotEmpty) {
+        final lastMessage = data.first;
+        final lastMessageId = lastMessage['id'].toString();
+        final lastSenderId = lastMessage['user_id'].toString();
+        final currentUserId = _authService.currentUser?.id;
+
+        // Jika mesej bukan dari diri sendiri dan tab sembang tidak aktif
+        if (lastSenderId != currentUserId && _currentIndex != 1) {
+          _checkIfMessageIsNew(lastMessageId);
+        }
+      }
+    });
+  }
+
+  void _checkIfMessageIsNew(String messageId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReadId = prefs.getString('last_read_chat_id') ?? '';
+    
+    if (lastReadId != messageId && mounted) {
+      setState(() {
+        _hasNewChat = true;
+      });
+    }
+  }
+
+  void _markChatAsRead() async {
+    final prefs = await SharedPreferences.getInstance();
+    // Dapatkan ID mesej terakhir untuk disimpan sebagai 'sudah baca'
+    try {
+      final lastMsg = await Supabase.instance.client
+          .from('admin_chats')
+          .select('id')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      
+      if (lastMsg != null) {
+        await prefs.setString('last_read_chat_id', lastMsg['id'].toString());
+      }
+    } catch (e) {
+      debugPrint('Error marking chat as read: $e');
+    }
+
+    if (mounted) {
+      setState(() {
+        _hasNewChat = false;
+      });
+    }
+  }
+
+  List<Widget> get _screens {
+    final user = _authService.currentUser;
+    final bool hasAdminPrivileges = user?.userMetadata?['is_admin'] == true ||
+        user?.userMetadata?['is_moderator'] == true ||
+        user?.userMetadata?['is_yb'] == true;
+
+    return [
+      const HomeScreen(),
+      hasAdminPrivileges ? const AdminChatScreen() : const ReportScreen(),
+      const DashboardScreen(),
+      const CityDashboardScreen(),
+      const ProfileScreen(),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -187,6 +286,14 @@ class _MainNavigationState extends State<MainNavigation> {
                       isDarkMode: isDarkMode,
                     ),
                   ),
+                  Expanded(
+                    child: _buildNavItem(
+                      imagePath: 'assets/images/nav_profile.png',
+                      label: 'Profil',
+                      index: 4,
+                      isDarkMode: isDarkMode,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -236,8 +343,16 @@ class _MainNavigationState extends State<MainNavigation> {
                     ? Colors.white
                     : (isDarkMode ? Colors.grey.shade400 : Colors.grey.shade600),
                 errorBuilder: (context, error, stackTrace) {
+                  IconData icon;
+                  switch (index) {
+                    case 0: icon = Icons.explore; break;
+                    case 2: icon = Icons.list_alt; break;
+                    case 3: icon = Icons.bar_chart; break;
+                    case 4: icon = Icons.person; break;
+                    default: icon = Icons.help_outline;
+                  }
                   return Icon(
-                    index == 0 ? Icons.explore : (index == 2 ? Icons.list_alt : Icons.bar_chart),
+                    icon,
                     size: 22,
                     color: isSelected ? Colors.white : Colors.grey,
                   );
@@ -248,7 +363,7 @@ class _MainNavigationState extends State<MainNavigation> {
             AnimatedDefaultTextStyle(
               duration: const Duration(milliseconds: 200),
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 9,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                 color: isSelected
                     ? (isDarkMode ? Colors.white : AppTheme.primaryRed)
@@ -265,9 +380,18 @@ class _MainNavigationState extends State<MainNavigation> {
 
   Widget _buildAddReportNavItem(bool isDarkMode) {
     final isSelected = _currentIndex == 1;
+    final user = _authService.currentUser;
+    final bool hasAdminPrivileges = user?.userMetadata?['is_admin'] == true ||
+        user?.userMetadata?['is_moderator'] == true ||
+        user?.userMetadata?['is_yb'] == true;
 
     return GestureDetector(
-      onTap: () => setState(() => _currentIndex = 1),
+      onTap: () {
+        setState(() => _currentIndex = 1);
+        if (hasAdminPrivileges) {
+          _markChatAsRead();
+        }
+      },
       onLongPress: _showAdminLogin,
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
@@ -278,44 +402,72 @@ class _MainNavigationState extends State<MainNavigation> {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOutCubic,
-              width: isSelected ? 42 : 38,
-              height: isSelected ? 42 : 38,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
-                ),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.primaryRed.withOpacity(isSelected ? 0.5 : 0.3),
-                    blurRadius: isSelected ? 12 : 8,
-                    offset: const Offset(0, 4),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOutCubic,
+                  width: isSelected ? 42 : 38,
+                  height: isSelected ? 42 : 38,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.primaryRed.withOpacity(isSelected ? 0.5 : 0.3),
+                        blurRadius: isSelected ? 12 : 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              child: Icon(
-                Icons.add_rounded,
-                size: isSelected ? 24 : 22,
-                color: Colors.white,
-              ),
+                  child: Icon(
+                    hasAdminPrivileges ? Icons.chat_bubble_rounded : Icons.add_rounded,
+                    size: isSelected ? 24 : 22,
+                    color: Colors.white,
+                  ),
+                ),
+                if (hasAdminPrivileges && _hasNewChat && !isSelected)
+                  Positioned(
+                    top: -2,
+                    right: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.amber,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
+                        ],
+                      ),
+                      child: const Text(
+                        '!',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 4),
             AnimatedDefaultTextStyle(
               duration: const Duration(milliseconds: 200),
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 9,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                 color: isSelected
                     ? (isDarkMode ? Colors.white : AppTheme.primaryRed)
                     : (isDarkMode ? Colors.grey.shade500 : Colors.grey.shade600),
                 letterSpacing: isSelected ? 0.5 : 0,
               ),
-              child: const Text('Lapor'),
+              child: Text(hasAdminPrivileges ? 'Sembang' : 'Lapor'),
             ),
           ],
         ),
@@ -324,6 +476,39 @@ class _MainNavigationState extends State<MainNavigation> {
   }
 
   void _showAdminLogin() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    final bool isGoogleAdmin = user?.userMetadata?['is_admin'] == true;
+
+    // 1. Jika pengguna adalah Admin melalui Google Login, terus masuk tanpa had
+    if (isGoogleAdmin) {
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+        );
+      }
+      return;
+    }
+
+    // 2. SEMAK SESI ADMIN TRADISIONAL (SECRET BUTTON LAMA)
+    final prefs = await SharedPreferences.getInstance();
+    final bool isAdminLoggedIn = prefs.getBool('isAdminLoggedIn') ?? false;
+    final int lastAction = prefs.getInt('lastAdminAction') ?? 0;
+    final int now = DateTime.now().millisecondsSinceEpoch;
+
+    // Jika sudah login manual dan belum 3 minit idle
+    if (isAdminLoggedIn && (now - lastAction < 180000)) {
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+        );
+      }
+      return;
+    }
+
+    // 3. Jika bukan Google Admin dan tiada sesi aktif, barulah ke screen login
+    if (!mounted) return;
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(builder: (context) => const AdminLoginScreen()),

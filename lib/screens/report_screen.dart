@@ -17,6 +17,7 @@ import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:intl/intl.dart';
 import 'in_app_camera_screen.dart';
 import '../models/pothole_report.dart';
 import 'disclaimer_screen.dart';
@@ -29,7 +30,7 @@ class ReportScreen extends StatefulWidget {
 }
 
 class _ReportScreenState extends State<ReportScreen> {
-  File? _image;
+  final List<File> _images = [];
   LatLng? _location;
   
   final TextEditingController _addressController = TextEditingController(text: 'Mendapatkan lokasi...');
@@ -42,21 +43,16 @@ class _ReportScreenState extends State<ReportScreen> {
   final List<String> _categories = [
     'Lubang Jalan',
     'Lampu Jalan Padam',
+    'Gangguan Elektrik',
     'Sampah Sarap',
     'Longkang Tersumbat',
     'Pokok Tumbang',
     'Lain-lain'
   ];
 
-  String? _duration;
-  final List<String> _durationOptions = [
-    'Kurang dari seminggu',
-    '1-2 minggu',
-    '2-4 minggu',
-    '1-3 bulan',
-    '3-6 bulan',
-    'Lebih 6 bulan',
-  ];
+  DateTime? _incidentDateTime;
+  final TextEditingController _dateTimeController = TextEditingController();
+  
   bool _isLoading = false;
   bool _isLoggingIn = false;
   
@@ -123,16 +119,32 @@ class _ReportScreenState extends State<ReportScreen> {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        setState(() {
-          _location = LatLng(_defaultLat, _defaultLon);
-          _addressController.text = 'Perkhidmatan lokasi dimatikan';
-        });
+        if (mounted) {
+          setState(() {
+            _location = null; // Jangan beri lokasi lalai jika GPS tutup
+            _addressController.text = 'Sila hidupkan GPS anda';
+          });
+          _showSnackBar('Perkhidmatan lokasi dimatikan. Sila hidupkan GPS.', isError: true);
+        }
         return;
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          if (mounted) {
+            _showSnackBar('Kebenaran lokasi dinafi.', isError: true);
+          }
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          _showSnackBar('Kebenaran lokasi dinafi secara kekal. Sila tukar di tetapan.', isError: true);
+        }
+        return;
       }
 
       Position position = await Geolocator.getCurrentPosition(
@@ -140,16 +152,32 @@ class _ReportScreenState extends State<ReportScreen> {
       );
 
       final newPos = LatLng(position.latitude, position.longitude);
-      setState(() {
-        _location = newPos;
-      });
+      
+      // SEMAK KAWASAN SERTA-MERTA
+      if (!_isInAllowedArea(newPos)) {
+        if (mounted) {
+          setState(() {
+            _location = null;
+            _addressController.text = 'Di luar kawasan perkhidmatan';
+          });
+          _showSnackBar('Anda berada di luar kawasan Lahad Datu / Tungku.', isError: true);
+        }
+        return;
+      }
 
-      await _updateAddress(position.latitude, position.longitude);
+      if (mounted) {
+        setState(() {
+          _location = newPos;
+        });
+        await _updateAddress(position.latitude, position.longitude);
+      }
     } catch (e) {
-      setState(() {
-        _location = LatLng(_defaultLat, _defaultLon);
-        _addressController.text = 'Gagal mendapatkan lokasi';
-      });
+      if (mounted) {
+        setState(() {
+          _location = null;
+          _addressController.text = 'Gagal mendapatkan lokasi';
+        });
+      }
     }
   }
 
@@ -233,6 +261,13 @@ class _ReportScreenState extends State<ReportScreen> {
     final lat = location['lat'] as double;
     final lon = location['lon'] as double;
     final point = LatLng(lat, lon);
+    
+    // SEMAK KAWASAN SEBELUM PILIH
+    if (!_isInAllowedArea(point)) {
+      _showSnackBar('Lokasi ini di luar kawasan Lahad Datu / Tungku.', isError: true);
+      return;
+    }
+
     _mapController.move(point, 16);
     setState(() {
       _location = point;
@@ -319,11 +354,22 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Future<void> _processImage(File imageFile) async {
-    setState(() { _image = imageFile; _isAnalyzingImage = true; });
+    if (_images.length >= 5) {
+      _showSnackBar('Maksimum 5 foto sahaja.', isError: true);
+      return;
+    }
+
+    setState(() { 
+      _images.add(imageFile); 
+      _isAnalyzingImage = true; 
+    });
     try {
       final validation = await _aiService.validateImageByCategory(imageFile, _category);
       if (!validation.isValid) {
-        setState(() { _image = null; _isAnalyzingImage = false; });
+        setState(() { 
+          _images.remove(imageFile); 
+          _isAnalyzingImage = false; 
+        });
         _showValidationError(validation);
         return;
       }
@@ -354,6 +400,63 @@ class _ReportScreenState extends State<ReportScreen> {
     );
   }
 
+  Future<bool> _showConfirmationDialog() async {
+    bool isAgreed = false;
+    return await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: AppTheme.primaryBlue),
+                  SizedBox(width: 10),
+                  Text('Pengesahan Aduan'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Laporan ini adalah bagi memaklumkan kepada Pejabat Adun agar dipanjangkan kepada pihak yang sepatutnya. Sebarang hasil aduan bergantung kepada pihak berkuasa.',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  CheckboxListTile(
+                    value: isAgreed,
+                    onChanged: (val) => setState(() => isAgreed = val ?? false),
+                    title: const Text('Saya faham dan setuju', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    activeColor: AppTheme.primaryBlue,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Batal', style: TextStyle(color: Colors.grey)),
+                ),
+                if (isAgreed)
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryRed,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Teruskan', style: TextStyle(color: Colors.white)),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    ) ?? false;
+  }
+
   Future<void> _submitReportFlow() async {
     if (_authService.currentUser == null) {
       _showSnackBar('Sila log masuk untuk menghantar laporan.', isError: true);
@@ -378,8 +481,8 @@ class _ReportScreenState extends State<ReportScreen> {
       return;
     }
 
-    if (_image == null || _location == null) {
-      _showSnackBar('Sila ambil foto dan pastikan lokasi dikesan.', isError: true);
+    if (_images.isEmpty || _location == null) {
+      _showSnackBar('Sila ambil sekurang-kurangnya satu foto dan pastikan lokasi dikesan.', isError: true);
       return;
     }
 
@@ -388,10 +491,28 @@ class _ReportScreenState extends State<ReportScreen> {
       return;
     }
 
+    final confirmed = await _showConfirmationDialog();
+    if (!confirmed) return;
+
     setState(() => _isLoading = true);
     
     try {
-      final imageUrl = await _supabaseService.uploadImage(_image!);
+      final areaName = _areaNameController.text.trim();
+      final duplicate = await _supabaseService.checkForDuplicate(_location!.latitude, _location!.longitude, areaName);
+      if (duplicate != null) {
+        setState(() => _isLoading = false);
+        final bool proceed = await _showDuplicateWarning(duplicate);
+        if (!proceed) return;
+        setState(() => _isLoading = true);
+      }
+
+      List<String> imageUrls = [];
+      for (var img in _images) {
+        final url = await _supabaseService.uploadImage(img);
+        imageUrls.add(url);
+      }
+      final imageUrl = imageUrls.join(',');
+
       final deviceId = await _deviceService.getDeviceId();
       
       String? pushId = OneSignal.User.pushSubscription.id;
@@ -402,7 +523,7 @@ class _ReportScreenState extends State<ReportScreen> {
         longitude: _location!.longitude,
         address: _addressController.text,
         areaName: areaName,
-        duration: _duration ?? 'Baru dikesan',
+        duration: _incidentDateTime != null ? DateFormat('dd/MM/yyyy HH:mm').format(_incidentDateTime!) : 'Tidak dinyatakan',
         description: _descriptionController.text,
         deviceId: deviceId,
         severity: _detectedSeverity,
@@ -426,12 +547,38 @@ class _ReportScreenState extends State<ReportScreen> {
     }
   }
 
+  Future<bool> _showDuplicateWarning(PotholeReport duplicate) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Aduan Serupa Ditemui'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Aduan di kawasan ini telah pun dilaporkan sebelum ini.'),
+            const SizedBox(height: 10),
+            Text('Kod: ${duplicate.reportCode}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Status: ${duplicate.status.toUpperCase()}'),
+            const SizedBox(height: 10),
+            const Text('Adakah anda mahu meneruskan laporan baru ini?'),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Teruskan')),
+        ],
+      ),
+    ) ?? false;
+  }
+
   void _resetForm() {
     setState(() {
-      _image = null;
+      _images.clear();
       _descriptionController.clear();
       _areaNameController.clear();
-      _duration = null;
+      _incidentDateTime = null;
+      _dateTimeController.clear();
       _category = 'Lubang Jalan';
       _reporterContactController.text = '60';
     });
@@ -469,7 +616,6 @@ class _ReportScreenState extends State<ReportScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text('Lapor Masalah', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                        const Text('Sayangi Tungku, Selamatkan Tungku', style: TextStyle(color: Colors.grey)),
                         
                         if (!isLoggedIn) _buildLoginPrompt(isDarkMode),
                         
@@ -517,20 +663,49 @@ class _ReportScreenState extends State<ReportScreen> {
   Widget _buildHeader(bool isDarkMode, bool isLoggedIn) {
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          const Icon(Icons.add_location_alt_rounded, color: AppTheme.primaryRed),
-          const SizedBox(width: 10),
-          const Text('Aduan Komuniti', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const Spacer(),
-          if (isLoggedIn)
-            IconButton(
-              icon: const Icon(Icons.logout, size: 20),
-              onPressed: () => _authService.signOut(),
-              tooltip: 'Log Keluar',
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1)),
             ),
-          IconButton(onPressed: () => context.read<ThemeCubit>().toggleTheme(), icon: const Icon(Icons.brightness_6_rounded)),
-        ],
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      )
+                    ],
+                  ),
+                  child: Image.asset(
+                    'assets/images/app_icon.png',
+                    width: 24,
+                    height: 24,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Lapor', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white : Colors.black87)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -609,16 +784,28 @@ class _ReportScreenState extends State<ReportScreen> {
           ),
         ),
         const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('No. Telefon ', style: TextStyle(fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                '(Laporan anda akan ditolak jika nombor anda tidak dapat dihubungi. WAJIB)',
+                style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
         TextField(
           controller: _reporterContactController,
           keyboardType: TextInputType.phone,
           decoration: InputDecoration(
-            labelText: 'No. Telefon (Wajib)', 
+            hintText: 'Contoh: 60123456789',
             filled: true, 
             fillColor: Colors.grey.withOpacity(0.1), 
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
             prefixIcon: const Icon(Icons.phone, size: 20),
-            hintText: 'Contoh: 60123456789'
           ),
           onChanged: (value) {
             if (!value.startsWith('60')) {
@@ -634,16 +821,121 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Widget _buildPhotoSection(bool isDarkMode) {
-    return GestureDetector(
-      onTap: _showImagePicker,
-      child: Container(
-        height: 200,
-        width: double.infinity,
-        decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), borderRadius: BorderRadius.circular(24), border: Border.all(color: _image == null ? Colors.transparent : AppTheme.primaryRed)),
-        child: _image != null 
-          ? ClipRRect(borderRadius: BorderRadius.circular(22), child: Image.file(_image!, fit: BoxFit.cover))
-          : Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.add_a_photo_rounded, size: 40, color: AppTheme.primaryRed), Text('Ketik untuk tambah foto', style: TextStyle(color: isDarkMode ? Colors.white70 : Colors.black54))]),
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Foto ', style: TextStyle(fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                '(Gambar pertama akan dijadikan gambar utama, Maksimum 5)',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDarkMode ? Colors.white70 : Colors.black54,
+                  fontWeight: FontWeight.normal,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // Butang Tambah Foto Utama
+        if (_images.length < 5)
+          GestureDetector(
+            onTap: _showImagePicker,
+            child: Container(
+              width: double.infinity,
+              height: 100,
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: AppTheme.primaryRed.withOpacity(0.5),
+                  style: BorderStyle.solid,
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add_a_photo_rounded, color: AppTheme.primaryRed, size: 32),
+                  const SizedBox(height: 8),
+                  const Text('Klik untuk Tambah Gambar', style: TextStyle(fontWeight: FontWeight.w500)),
+                ],
+              ),
+            ),
+          ),
+        
+        if (_images.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          // Senarai Gambar Di Bawah
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 1,
+            ),
+            itemCount: _images.length,
+            itemBuilder: (context, index) {
+              return Stack(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: index == 0 
+                        ? Border.all(color: Colors.green, width: 3) 
+                        : Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(9),
+                      child: Image.file(_images[index], width: double.infinity, height: double.infinity, fit: BoxFit.cover),
+                    ),
+                  ),
+                  if (index == 0)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: const BoxDecoration(
+                          color: Colors.green,
+                          borderRadius: BorderRadius.only(topLeft: Radius.circular(8), bottomRight: Radius.circular(8)),
+                        ),
+                        child: const Text('UTAMA', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  Positioned(
+                    top: 5,
+                    right: 5,
+                    child: GestureDetector(
+                      onTap: () => setState(() => _images.removeAt(index)),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                        child: const Icon(Icons.close, size: 14, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+        if (_images.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 12.0),
+            child: Center(
+              child: Text(
+                'Sila muat naik sekurang-kurangnya satu foto aduan.',
+                style: TextStyle(color: Colors.red.shade400, fontSize: 12, fontStyle: FontStyle.italic),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -688,17 +980,65 @@ class _ReportScreenState extends State<ReportScreen> {
     );
   }
 
+  Future<void> _selectDateTime() async {
+    final DateTime? pickedDate = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppTheme.primaryRed,
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (pickedDate != null) {
+      if (!mounted) return;
+      final TimeOfDay? pickedTime = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.now(),
+      );
+
+      if (pickedTime != null) {
+        setState(() {
+          _incidentDateTime = DateTime(
+            pickedDate.year,
+            pickedDate.month,
+            pickedDate.day,
+            pickedTime.hour,
+            pickedTime.minute,
+          );
+          _dateTimeController.text = DateFormat('dd/MM/yyyy HH:mm').format(_incidentDateTime!);
+        });
+      }
+    }
+  }
+
   Widget _buildDurationSection(bool isDarkMode) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Durasi', style: TextStyle(fontWeight: FontWeight.bold)),
+        const Text('Tarikh & Masa Berlaku', style: TextStyle(fontWeight: FontWeight.bold)),
         const SizedBox(height: 10),
-        DropdownButtonFormField<String>(
-          value: _duration,
-          hint: const Text('Berapa lama telah wujud?'),
-          items: _durationOptions.map((d) => DropdownMenuItem(value: d, child: Text(d))).toList(),
-          onChanged: (v) => setState(() => _duration = v),
+        TextField(
+          controller: _dateTimeController,
+          readOnly: true,
+          onTap: _selectDateTime,
+          decoration: InputDecoration(
+            hintText: 'Pilih tarikh dan masa...',
+            prefixIcon: const Icon(Icons.calendar_today_rounded, size: 20),
+            filled: true,
+            fillColor: Colors.grey.withOpacity(0.1),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+          ),
         ),
       ],
     );
@@ -708,24 +1048,31 @@ class _ReportScreenState extends State<ReportScreen> {
     return TextField(
       controller: _descriptionController,
       maxLines: 3,
-      decoration: const InputDecoration(labelText: 'Penerangan (Pilihan)', hintText: 'Terangkan keadaan lubang/masalah...'),
+      decoration: const InputDecoration(labelText: 'Maklumat Tambahan (Pilihan)', hintText: 'Terangkan keadaan lubang/masalah...'),
     );
   }
 
   Widget _buildSubmitButton(bool isLoggedIn) {
+    bool isLocationValid = _location != null && _isInAllowedArea(_location);
+
     return SizedBox(
       width: double.infinity,
       height: 56,
       child: ElevatedButton(
-        onPressed: (_isLoading || !isLoggedIn) ? null : _submitReportFlow,
+        onPressed: (_isLoading || !isLoggedIn || !isLocationValid) ? null : _submitReportFlow,
         style: ElevatedButton.styleFrom(
-          backgroundColor: isLoggedIn ? AppTheme.primaryRed : Colors.grey, 
+          backgroundColor: (isLoggedIn && isLocationValid) ? AppTheme.primaryRed : Colors.grey, 
           foregroundColor: Colors.white, 
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
         ),
         child: _isLoading 
             ? const CircularProgressIndicator(color: Colors.white) 
-            : Text(isLoggedIn ? 'Hantar Laporan' : 'Log Masuk untuk Lapor', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            : Text(
+                !isLoggedIn 
+                  ? 'Log Masuk untuk Lapor' 
+                  : (!isLocationValid ? 'Di Luar Kawasan' : 'Hantar Laporan'), 
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+              ),
       ),
     );
   }
@@ -737,6 +1084,7 @@ class _ReportScreenState extends State<ReportScreen> {
     _reporterNameController.dispose();
     _reporterContactController.dispose();
     _searchController.dispose();
+    _dateTimeController.dispose();
     super.dispose();
   }
 }

@@ -51,14 +51,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   if (state is ReportsLoading) return const Center(child: CircularProgressIndicator());
                   if (state is ReportsError) return _buildErrorState(isDarkMode);
                   if (state is ReportsLoaded) {
-                    if (state.reports.isEmpty) return _buildEmptyState(isDarkMode);
+                    // LOGIK TAPISAN: Hanya tunjuk status 'processing' atau 'resolved'
+                    final publicReports = state.reports.where((r) => r.status == 'processing' || r.status == 'resolved').toList();
+                    
+                    if (publicReports.isEmpty) return _buildEmptyState(isDarkMode);
                     return RefreshIndicator(
                       onRefresh: () => context.read<ReportsCubit>().refreshReports(),
                       color: AppTheme.primaryRed,
                       child: ListView.builder(
                         padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
-                        itemCount: state.reports.length,
-                        itemBuilder: (context, index) => _buildReportCard(state.reports[index], isDarkMode, index),
+                        itemCount: publicReports.length,
+                        itemBuilder: (context, index) => _buildReportCard(publicReports[index], isDarkMode, index),
                       ),
                     );
                   }
@@ -89,26 +92,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [AppTheme.primaryRed, AppTheme.primaryBlue]),
-                    borderRadius: BorderRadius.circular(14),
+                    color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      )
+                    ],
                   ),
-                  child: const Icon(Icons.dashboard_rounded, color: Colors.white, size: 22),
+                  child: Image.asset(
+                    'assets/images/app_icon.png',
+                    width: 24,
+                    height: 24,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Dashboard', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white : Colors.black87)),
-                    Text('Sayangi Tungku, Selamatkan Tungku', style: TextStyle(fontSize: 11, color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade600)),
+                  Text('Dashboard', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white : Colors.black87)),
                   ],
                 ),
                 const Spacer(),
+                /* 
                 IconButton(
                   onPressed: () => context.read<ThemeCubit>().toggleTheme(),
                   icon: Icon(isDarkMode ? Icons.wb_sunny_rounded : Icons.nightlight_round, color: isDarkMode ? Colors.amber : Colors.indigo),
                 ),
+                */
               ],
             ),
           ),
@@ -122,9 +137,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (context, state) {
         int total = 0, pending = 0, resolved = 0;
         if (state is ReportsLoaded) {
-          total = state.reports.length;
-          pending = state.reports.where((r) => r.status != 'resolved').length;
-          resolved = state.reports.where((r) => r.status == 'resolved').length;
+          final publicReports = state.reports.where((r) => r.status == 'processing' || r.status == 'resolved').toList();
+          total = publicReports.length;
+          pending = publicReports.where((r) => r.status == 'processing').length;
+          resolved = publicReports.where((r) => r.status == 'resolved').length;
         }
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -158,6 +174,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildReportCard(PotholeReport report, bool isDarkMode, int index) {
+    final isLoggedIn = _authService.currentUser != null;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Container(
@@ -173,7 +191,108 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 ClipRRect(
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                  child: CachedNetworkImage(imageUrl: report.imageUrl, height: 180, width: double.infinity, fit: BoxFit.cover),
+                  child: Stack(
+                    children: [
+                      // LOGIK GAMBAR BERSEBELAHAN JIKA SELESAI
+                      if (report.status == 'resolved' && report.resolvedImageUrl != null)
+                        SizedBox(
+                          height: 180,
+                          child: Row(
+                            children: [
+                              // FOTO SEBELUM
+                              Expanded(
+                                child: Stack(
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () => _viewFullImage(context, report.imageUrl, 'SEBELUM'),
+                                      child: Stack(
+                                        children: [
+                                          CachedNetworkImage(
+                                            imageUrl: report.imageUrl,
+                                            height: 180,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                            placeholder: (context, url) => Container(color: Colors.grey.shade200),
+                                          ),
+                _buildWatermark(size: 100, opacity: 0.5),
+                                        ],
+                                      ),
+                                    ),
+                                    _buildImageLabel('SEBELUM', Colors.black54),
+                                  ],
+                                ),
+                              ),
+                              const VerticalDivider(width: 2, color: Colors.white, thickness: 2),
+                              // FOTO SELEPAS
+                              Expanded(
+                                child: Stack(
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () => _viewFullImage(context, report.resolvedImageUrl!, 'SELEPAS'),
+                                      child: Stack(
+                                        children: [
+                                          CachedNetworkImage(
+                                            imageUrl: report.resolvedImageUrl!,
+                                            height: 180,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                            placeholder: (context, url) => Container(color: Colors.grey.shade200),
+                                          ),
+                                          _buildWatermark(size: 100, opacity: 0.5),
+                                        ],
+                                      ),
+                                    ),
+                                    _buildImageLabel('SELEPAS', Colors.green.withOpacity(0.7)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        // FOTO ASAL (PENDING / PROCESSING)
+                        GestureDetector(
+                          onTap: () => _viewFullImage(context, report.imageUrl, 'ADUAN'),
+                          child: Stack(
+                            children: [
+                              CachedNetworkImage(
+                                imageUrl: report.imageUrl, 
+                                height: 180, 
+                                width: double.infinity, 
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) => Container(height: 180, color: Colors.grey.withOpacity(0.1), child: const Center(child: CircularProgressIndicator())),
+                              ),
+                              _buildWatermark(size: 120, opacity: 0.5),
+                            ],
+                          ),
+                        ),
+
+                      if (!isLoggedIn)
+                        Positioned.fill(
+                          child: ClipRRect(
+                            child: BackdropFilter(
+                              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                              child: Container(
+                                color: Colors.black.withOpacity(0.3),
+                                child: const Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.lock_rounded, color: Colors.white70, size: 32),
+                                      SizedBox(height: 8),
+                                      Text(
+                                        'Sila log masuk untuk melihat foto',
+                                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
                 Positioned(top: 14, right: 14, child: _buildStatusBadge(report.status)),
               ],
@@ -184,18 +303,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(report.areaName ?? 'Kawasan Tidak Diketahui', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white : Colors.black87)),
+                  if (report.reportCode != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4.0),
+                      child: Text('ID: ${report.reportCode}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.primaryBlue)),
+                    ),
                   const SizedBox(height: 8),
                   Row(children: [Icon(Icons.place_rounded, size: 14, color: Colors.grey), const SizedBox(width: 6), Expanded(child: Text(report.address ?? '', style: const TextStyle(fontSize: 12, color: Colors.grey), maxLines: 1, overflow: TextOverflow.ellipsis))]),
                   const Divider(height: 30),
-                  Row(
-                    children: [
-                      Icon(Icons.schedule_rounded, size: 14, color: Colors.grey),
-                      const SizedBox(width: 6),
-                      Text(_formatDate(report.createdAt), style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                      const Spacer(),
-                      _buildActionRow(report, isDarkMode),
-                    ],
-                  ),
+                      Row(
+                        children: [
+                          Icon(Icons.schedule_rounded, size: 14, color: Colors.grey),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  DateFormat('d MMM yyyy, h:mm a').format(report.createdAtMYT),
+                                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                                ),
+                                if (report.status == 'resolved' && report.resolvedBy != null)
+                                  Text(
+                                    'Diselesaikan oleh: ${report.resolvedBy}',
+                                    style: const TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          _buildActionRow(report, isDarkMode, isLoggedIn),
+                        ],
+                      ),
                 ],
               ),
             ),
@@ -205,10 +343,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildActionRow(PotholeReport report, bool isDarkMode) {
+  Widget _buildActionRow(PotholeReport report, bool isDarkMode, bool isLoggedIn) {
     return Row(
       children: [
-        IconButton(icon: const Icon(Icons.thumb_up_outlined, size: 18), onPressed: () => _communityService.toggleUpvote(report.id)),
+        IconButton(
+          icon: const Icon(Icons.thumb_up_outlined, size: 18), 
+          onPressed: () {
+            if (!isLoggedIn) {
+              _showLoginRequiredSnackBar('Sila log masuk untuk menyokong laporan ini.');
+              return;
+            }
+            _communityService.toggleUpvote(report.id);
+          },
+        ),
         Text('${report.upvoteCount}', style: const TextStyle(fontSize: 12)),
         const SizedBox(width: 10),
         IconButton(icon: const Icon(Icons.chat_bubble_outline, size: 18), onPressed: () => _showCommentsSheet(report, isDarkMode)),
@@ -216,6 +363,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(width: 10),
         IconButton(icon: const Icon(Icons.share_outlined, size: 18), onPressed: () => _shareService.shareReport(report)),
       ],
+    );
+  }
+
+  void _showLoginRequiredSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -231,6 +388,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  void _viewFullImage(BuildContext context, String url, String title) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(
+                width: double.infinity,
+                height: double.infinity,
+                color: Colors.black.withOpacity(0.9),
+              ),
+            ),
+            Stack(
+              children: [
+                InteractiveViewer(
+                  child: CachedNetworkImage(
+                    imageUrl: url,
+                    fit: BoxFit.contain,
+                    placeholder: (context, url) => const CircularProgressIndicator(),
+                  ),
+                ),
+                _buildWatermark(size: 150, opacity: 0.4),
+              ],
+            ),
+            Positioned(
+              top: 40,
+              left: 20,
+              child: Text(
+                title,
+                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            Positioned(
+              top: 40,
+              right: 20,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWatermark({double size = 120, double opacity = 0.5}) {
+    return Positioned(
+      bottom: 12,
+      right: 12,
+      child: IgnorePointer(
+        child: Opacity(
+          opacity: opacity,
+          child: Image.asset(
+            'assets/images/logo_s_assaffal.png',
+            width: size,
+            errorBuilder: (context, error, stackTrace) {
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildStatusBadge(String status) {
     final isResolved = status == 'resolved';
     String label = isResolved ? 'SELESAI' : 'PROSES';
@@ -242,12 +469,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildImageLabel(String text, Color color) {
+    return Positioned(
+      bottom: 8,
+      left: 8,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          text,
+          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
   Widget _buildErrorState(bool isDarkMode) => const Center(child: Text('Gagal memuat laporan'));
   Widget _buildEmptyState(bool isDarkMode) => const Center(child: Text('Tiada laporan'));
 
   String _formatDate(DateTime date) {
-    // Memastikan waktu dipaparkan mengikut waktu tempatan Malaysia
-    return DateFormat('d MMM yyyy, h:mm a').format(date.toLocal());
+    return DateFormat('d MMM yyyy, h:mm a').format(date.toUtc().add(const Duration(hours: 8)));
   }
 }
 
@@ -309,13 +553,23 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                     final canManage = isOwner || isAdmin;
                     
                     DateTime commentDate = DateTime.parse(c['created_at']).toLocal();
+                    final bool isVerified = c['user_metadata']?['phone_verified'] == true;
+
                     return ListTile(
-                      title: Text(c['user_name'] ?? 'Pengguna', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      title: Row(
+                        children: [
+                          Text(c['user_name'] ?? 'Pengguna', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          if (isVerified) ...[
+                            const SizedBox(width: 4),
+                            const Icon(Icons.verified, color: Colors.blue, size: 14),
+                          ],
+                        ],
+                      ),
                       subtitle: Text(c['content'] ?? ''),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(DateFormat('d/M H:mm').format(commentDate), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                          Text(DateFormat('d/M H:mm').format(commentDate.toUtc().add(const Duration(hours: 8))), style: const TextStyle(fontSize: 10, color: Colors.grey)),
                           if (canManage)
                             _buildCommentOptions(c, isOwner),
                         ],

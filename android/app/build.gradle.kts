@@ -35,6 +35,10 @@ android {
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
             
+            // Matikan pengecilan kod untuk elakkan isu R8/ProGuard yang menyebabkan build gagal
+            isMinifyEnabled = false
+            isShrinkResources = false
+
             // Add ProGuard rules to handle R8 warnings
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

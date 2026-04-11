@@ -5,6 +5,7 @@ class AppTheme {
   // Warna Utama Baru (Merah & Biru)
   static const Color primaryRed = Color(0xFFE53935);
   static const Color primaryBlue = Color(0xFF1976D2);
+  static const Color primaryBlueDark = Color(0xFF0D47A1);
 
   // Dark theme colors
   static const Color darkBackground = Color(0xFF0F172A);

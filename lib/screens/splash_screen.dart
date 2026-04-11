@@ -80,11 +80,11 @@ class _SplashScreenState extends State<SplashScreen>
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 40),
                         child: Image.asset(
-                          'assets/images/warisan.png',
+                          'assets/images/logo_s_assaffal.png',
                           width: double.infinity,
                           fit: BoxFit.contain,
                           errorBuilder: (context, error, stackTrace) {
-                            // Fallback jika fail warisan.png belum ada
+                            // Fallback jika fail logo_s_assaffal.png belum ada
                             return Container(
                               height: 140,
                               width: 140,

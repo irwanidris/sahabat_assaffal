@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../config/onesignal_config.dart';
 import 'device_service.dart';
 
 class CommunityService {
@@ -10,9 +11,6 @@ class CommunityService {
 
   final SupabaseClient _client = Supabase.instance.client;
   final DeviceService _deviceService = DeviceService();
-
-  static const String _oneSignalAppId = "e9668216-1dc4-4567-8951-0eb406a75c46";
-  static const String _oneSignalRestKey = "os_v2_app_5ftiefq5yrcwpckrb22anj24i32rjfdxzimuk7mury6kjtc3sz3nzca2vpwdsaymnkqebnjgolx2wckyz2eqypfringry4haupxgmqq";
 
   // ============================================
   // NOTIFICATIONS
@@ -30,15 +28,18 @@ class CommunityService {
         Uri.parse('https://onesignal.com/api/v1/notifications'),
         headers: {
           'Content-Type': 'application/json; charset=utf-8',
-          'Authorization': 'Basic $_oneSignalRestKey',
+          'Authorization': 'Basic ${OneSignalConfig.restApiKey}',
         },
         body: jsonEncode({
-          'app_id': _oneSignalAppId,
+          'app_id': OneSignalConfig.appId,
           'include_player_ids': [targetPushId],
           'headings': {'en': title},
           'contents': {'en': message},
           'android_accent_color': 'FF0000',
           'small_icon': 'ic_stat_onesignal_default',
+          // TAMBAH BUNYI CUSTOM DI SINI
+          'android_sound': 'assaffal_sound', // Nama fail tanpa .mp3
+          'ios_sound': 'assaffal_sound.wav', // Nama fail dengan extension
         }),
       );
     } catch (e) {
@@ -90,7 +91,6 @@ class CommunityService {
         await _client.rpc('increment_upvote_count', params: {'p_report_id': reportIdInt});
         await _deviceService.addPoints(5, reason: 'upvote');
 
-        // Notification to owner
         _notifyOwner(reportId, "Seseorang menyokong laporan anda!", "Laporan kerosakan jalan anda mendapat sokongan baru.");
         
         return true;
@@ -123,6 +123,7 @@ class CommunityService {
     
     final deviceId = await _deviceService.getDeviceId();
     final fullName = user.userMetadata?['full_name'] ?? 'Pengguna Google';
+    final isVerified = user.userMetadata?['phone_verified'] == true;
     
     try {
       await _client.from('pothole_comments').insert({
@@ -131,11 +132,13 @@ class CommunityService {
         'user_id': user.id,
         'user_name': fullName,
         'content': content.trim(),
+        'user_metadata': {
+          'phone_verified': isVerified,
+        },
       });
       
       await _deviceService.addPoints(3, reason: 'comment');
 
-      // Notification to owner
       _notifyOwner(reportId, "Komen Baru!", "$fullName memberi komen: \"${content.trim()}\"");
       
       return true;

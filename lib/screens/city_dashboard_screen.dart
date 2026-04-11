@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/analytics_service.dart';
 import '../services/device_service.dart';
+import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
 
 class CityDashboardScreen extends StatefulWidget {
@@ -14,8 +17,10 @@ class CityDashboardScreen extends StatefulWidget {
 class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTickerProviderStateMixin {
   final AnalyticsService _analyticsService = AnalyticsService();
   final DeviceService _deviceService = DeviceService();
+  final AuthService _authService = AuthService();
   
   late TabController _tabController;
+  StreamSubscription<AuthState>? _authSubscription;
   
   Map<String, dynamic> _cityStats = {};
   List<Map<String, dynamic>> _areaData = [];
@@ -32,10 +37,19 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _loadData();
+    
+    // Dengar perubahan status login
+    _authSubscription = _authService.authStateChanges.listen((data) {
+      if (mounted) {
+        setState(() {});
+        _loadData();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _authSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -70,31 +84,104 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   @override
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final isLoggedIn = _authService.currentUser != null;
     
     return Scaffold(
       backgroundColor: isDarkMode ? const Color(0xFF0a0a1a) : const Color(0xFFF5F5F5),
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            // Header
-            _buildHeader(isDarkMode),
-            
-            // Tab Bar
-            _buildTabBar(isDarkMode),
-            
-            // Content
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : TabBarView(
-                      controller: _tabController,
-                      children: [
-                        _buildCityOverview(isDarkMode),
-                        _buildAreaAnalytics(isDarkMode),
-                        _buildPersonalImpact(isDarkMode),
-                      ],
-                    ),
+            // KANDUNGAN ASAL
+            Column(
+              children: [
+                _buildHeader(isDarkMode),
+                _buildTabBar(isDarkMode),
+                Expanded(
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _buildBeritaTerbaru(isDarkMode),
+                            _buildCityOverview(isDarkMode),
+                            _buildAreaAnalytics(isDarkMode),
+                          ],
+                        ),
+                ),
+              ],
             ),
+
+            // LAPISAN BLUR JIKA TIDAK LOGIN
+            if (!isLoggedIn)
+              Positioned.fill(
+                child: ClipRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      color: (isDarkMode ? Colors.black : Colors.white).withOpacity(0.4),
+                      child: Center(
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 32),
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: isDarkMode ? const Color(0xFF1a1a2e) : Colors.white,
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: [
+                              BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 20, spreadRadius: 5)
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primaryRed.withOpacity(0.1),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.analytics_outlined, color: AppTheme.primaryRed, size: 40),
+                              ),
+                              const SizedBox(height: 20),
+                              const Text(
+                                'Analisis Terhad',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Log masuk diperlukan untuk melihat analisis data komuniti dan impak peribadi anda.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Colors.grey, fontSize: 14),
+                              ),
+                              const SizedBox(height: 24),
+                              ElevatedButton(
+                                onPressed: () async {
+                                  try {
+                                    await _authService.signInWithGoogle();
+                                    _loadData();
+                                  } catch (e) {
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('Gagal Log Masuk: $e'))
+                                      );
+                                    }
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.primaryRed,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  minimumSize: const Size(double.infinity, 48),
+                                ),
+                                child: const Text('Log Masuk Sekarang', style: TextStyle(fontWeight: FontWeight.bold)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -102,51 +189,69 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   }
 
   Widget _buildHeader(bool isDarkMode) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
+              color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
               ),
-              borderRadius: BorderRadius.circular(16),
             ),
-            child: const Icon(Icons.analytics_rounded, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Text(
-                  'Dashboard',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: isDarkMode ? Colors.white : Colors.black87,
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      )
+                    ],
+                  ),
+                  child: Image.asset(
+                    'assets/images/app_icon.png',
+                    width: 24,
+                    height: 24,
                   ),
                 ),
-                Text(
-                  'Sayangi Tungku, Selamatkan Tungku',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: isDarkMode ? Colors.white60 : Colors.black54,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Statistik',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: isDarkMode ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: _loadData,
+                  icon: Icon(
+                    Icons.refresh_rounded,
+                    color: isDarkMode ? Colors.white70 : Colors.black54,
                   ),
                 ),
               ],
             ),
           ),
-          IconButton(
-            onPressed: _loadData,
-            icon: Icon(
-              Icons.refresh_rounded,
-              color: isDarkMode ? Colors.white70 : Colors.black54,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -172,9 +277,42 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
         indicatorSize: TabBarIndicatorSize.tab,
         dividerColor: Colors.transparent,
         tabs: const [
+          Tab(text: 'Berita'),
           Tab(text: 'Ringkasan'),
           Tab(text: 'Kawasan'),
-          Tab(text: 'Impak Saya'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBeritaTerbaru(bool isDarkMode) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.newspaper_rounded,
+            size: 64,
+            color: isDarkMode ? Colors.white24 : Colors.black12,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'AKAN DATANG',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: isDarkMode ? Colors.white38 : Colors.black38,
+              letterSpacing: 2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Berita terbaru dari Portal Berita Tungku.',
+            style: TextStyle(
+              fontSize: 14,
+              color: isDarkMode ? Colors.white24 : Colors.black26,
+            ),
+          ),
         ],
       ),
     );
@@ -188,7 +326,6 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Main Stats Cards
             Row(
               children: [
                 Expanded(
@@ -237,21 +374,14 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
               ],
             ),
             const SizedBox(height: 24),
-            
-            // Severity Breakdown
             _buildSectionTitle('Pecahan Tahap Bahaya', isDarkMode),
             const SizedBox(height: 12),
             _buildSeverityChart(isDarkMode),
             const SizedBox(height: 24),
-            
-            // Top Priority Areas
             _buildSectionTitle('Kawasan Keutamaan Tinggi', isDarkMode),
             const SizedBox(height: 12),
             ..._priorityAreas.take(5).map((area) => _buildPriorityAreaItem(area, isDarkMode)),
-            
             const SizedBox(height: 24),
-            
-            // Leaderboard Preview
             _buildSectionTitle('Penyumbang Teratas', isDarkMode),
             const SizedBox(height: 12),
             ..._leaderboard.take(3).toList().asMap().entries.map((entry) => 
@@ -293,10 +423,8 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
                     ],
                   );
                 }
-                
                 final area = _areaData[index - 1];
                 final maxCount = _areaData.isNotEmpty ? _areaData[0]['count'] as int : 1;
-                
                 return _buildAreaHeatmapItem(area, maxCount, isDarkMode);
               },
             ),
@@ -311,11 +439,8 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Impact Summary Card
             _buildImpactSummaryCard(isDarkMode),
             const SizedBox(height: 20),
-            
-            // Stats Grid
             Row(
               children: [
                 Expanded(
@@ -364,15 +489,10 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
               ],
             ),
             const SizedBox(height: 24),
-            
-            // Badges
             _buildSectionTitle('Pencapaian', isDarkMode),
             const SizedBox(height: 12),
             _buildBadgesSection(isDarkMode),
-            
             const SizedBox(height: 24),
-            
-            // Share Impact Button
             _buildShareImpactButton(isDarkMode),
           ],
         ),
@@ -514,44 +634,14 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
 
   Widget _buildSeverityBar(String label, int count, int total, Color color, String emoji, bool isDarkMode) {
     final percentage = total > 0 ? count / total : 0.0;
-    
     return Row(
       children: [
         Text(emoji, style: const TextStyle(fontSize: 16)),
         const SizedBox(width: 8),
-        SizedBox(
-          width: 80,
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              color: isDarkMode ? Colors.white70 : Colors.black54,
-            ),
-          ),
-        ),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: percentage,
-              backgroundColor: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
-              valueColor: AlwaysStoppedAnimation(color),
-              minHeight: 8,
-            ),
-          ),
-        ),
+        SizedBox(width: 80, child: Text(label, style: TextStyle(fontSize: 13, color: isDarkMode ? Colors.white70 : Colors.black54))),
+        Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(4), child: LinearProgressIndicator(value: percentage, backgroundColor: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1), valueColor: AlwaysStoppedAnimation(color), minHeight: 8))),
         const SizedBox(width: 12),
-        SizedBox(
-          width: 30,
-          child: Text(
-            '$count',
-            textAlign: TextAlign.end,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: isDarkMode ? Colors.white : Colors.black87,
-            ),
-          ),
-        ),
+        SizedBox(width: 30, child: Text('$count', textAlign: TextAlign.end, style: TextStyle(fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white : Colors.black87))),
       ],
     );
   }
@@ -560,45 +650,13 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
-      ),
+      decoration: BoxDecoration(color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05), borderRadius: BorderRadius.circular(12)),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.red.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.priority_high_rounded, color: Colors.red, size: 20),
-          ),
+          Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.red.withOpacity(0.15), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.priority_high_rounded, color: Colors.red, size: 20)),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              area['area'] ?? 'Tidak diketahui',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: isDarkMode ? Colors.white : Colors.black87,
-              ),
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.red.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              'Skor: ${area['priorityScore']}',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.red,
-              ),
-            ),
-          ),
+          Expanded(child: Text(area['area'] ?? 'Tidak diketahui', style: TextStyle(fontWeight: FontWeight.w600, color: isDarkMode ? Colors.white : Colors.black87))),
+          Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(20)), child: Text('Skor: ${area['priorityScore']}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red))),
         ],
       ),
     );
@@ -607,62 +665,16 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   Widget _buildLeaderboardItem(int rank, Map<String, dynamic> user, bool isDarkMode) {
     final colors = [Colors.amber, Colors.grey.shade400, Colors.brown.shade300];
     final rankColor = rank <= 3 ? colors[rank - 1] : Colors.grey;
-    
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
-      ),
+      decoration: BoxDecoration(color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05), borderRadius: BorderRadius.circular(12)),
       child: Row(
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: rankColor.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: Text(
-                '#$rank',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: rankColor,
-                ),
-              ),
-            ),
-          ),
+          Container(width: 32, height: 32, decoration: BoxDecoration(color: rankColor.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: Center(child: Text('#$rank', style: TextStyle(fontWeight: FontWeight.bold, color: rankColor)))),
           const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  user['name'] ?? 'Tanpa Nama',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: isDarkMode ? Colors.white : Colors.black87,
-                  ),
-                ),
-                Text(
-                  '${user['reports']} laporan',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDarkMode ? Colors.white60 : Colors.black54,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Text(
-            '${user['points']} mata',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: isDarkMode ? Colors.white70 : Colors.black54,
-            ),
-          ),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(user['name'] ?? 'Tanpa Nama', style: TextStyle(fontWeight: FontWeight.w600, color: isDarkMode ? Colors.white : Colors.black87)), Text('${user['reports']} laporan', style: TextStyle(fontSize: 12, color: isDarkMode ? Colors.white60 : Colors.black54))])),
+          Text('${user['points']} mata', style: TextStyle(fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white70 : Colors.black54)),
         ],
       ),
     );
@@ -673,209 +685,42 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
     final pending = area['pending'] as int;
     final resolved = area['resolved'] as int;
     final intensity = maxCount > 0 ? count / maxCount : 0.0;
-    
-    // Color based on intensity
     final color = Color.lerp(Colors.green, Colors.red, intensity)!;
-    
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: color.withOpacity(0.3),
-          width: 2,
-        ),
-      ),
+      decoration: BoxDecoration(color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05), borderRadius: BorderRadius.circular(16), border: Border.all(color: color.withOpacity(0.3), width: 2)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  area['area'] ?? 'Tidak diketahui',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: isDarkMode ? Colors.white : Colors.black87,
-                  ),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '$count laporan',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          Row(children: [Container(width: 12, height: 12, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))), const SizedBox(width: 12), Expanded(child: Text(area['area'] ?? 'Tidak diketahui', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isDarkMode ? Colors.white : Colors.black87))), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(20)), child: Text('$count laporan', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)))]),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              _buildMiniStat('Proses', pending, Colors.orange, isDarkMode),
-              const SizedBox(width: 16),
-              _buildMiniStat('Selesai', resolved, Colors.green, isDarkMode),
-              const Spacer(),
-              Text(
-                '👍 ${area['totalUpvotes']}',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: isDarkMode ? Colors.white60 : Colors.black54,
-                ),
-              ),
-            ],
-          ),
+          Row(children: [_buildMiniStat('Proses', pending, Colors.orange, isDarkMode), const SizedBox(width: 16), _buildMiniStat('Selesai', resolved, Colors.green, isDarkMode), const Spacer(), Text('👍 ${area['totalUpvotes']}', style: TextStyle(fontSize: 13, color: isDarkMode ? Colors.white60 : Colors.black54))]),
         ],
       ),
     );
   }
 
   Widget _buildMiniStat(String label, int value, Color color, bool isDarkMode) {
-    return Row(
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          '$label: $value',
-          style: TextStyle(
-            fontSize: 12,
-            color: isDarkMode ? Colors.white60 : Colors.black54,
-          ),
-        ),
-      ],
-    );
+    return Row(children: [Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)), const SizedBox(width: 6), Text('$label: $value', style: TextStyle(fontSize: 12, color: isDarkMode ? Colors.white60 : Colors.black54))]);
   }
 
   Widget _buildImpactSummaryCard(bool isDarkMode) {
     final roadFixed = (_personalStats['roadsImprovedMeters'] ?? 0).toDouble();
-    
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.primaryRed.withOpacity(0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
+      decoration: BoxDecoration(gradient: const LinearGradient(colors: [AppTheme.primaryRed, AppTheme.primaryBlue], begin: Alignment.topLeft, end: Alignment.bottomRight), borderRadius: BorderRadius.circular(24), boxShadow: [BoxShadow(color: AppTheme.primaryRed.withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 10))]),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.emoji_events_rounded, color: Colors.amber, size: 32),
-              const SizedBox(width: 12),
-              const Text(
-                'Impak Anda',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  'Tangga #${_personalStats['rank'] ?? 0}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          Row(children: [const Icon(Icons.emoji_events_rounded, color: Colors.amber, size: 32), const SizedBox(width: 12), const Text('Impak Anda', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)), const Spacer(), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(20)), child: Text('Tangga #${_personalStats['rank'] ?? 0}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)))]),
           const SizedBox(height: 20),
-          Text(
-            'Laporan anda telah membantu membaiki',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.white.withOpacity(0.8),
-            ),
-          ),
+          Text('Laporan anda telah membantu membaiki', style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.8))),
           const SizedBox(height: 4),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${roadFixed.toStringAsFixed(0)}m',
-                style: const TextStyle(
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10, left: 8),
-                child: Text(
-                  'jalan raya 🛣️',
-                  style: TextStyle(
-                    fontSize: 18,
-                    color: Colors.white70,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [Text('${roadFixed.toStringAsFixed(0)}m', style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.white)), const Padding(padding: EdgeInsets.only(bottom: 10, left: 8), child: Text('jalan raya 🛣️', style: TextStyle(fontSize: 18, color: Colors.white70)))]),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              const Icon(Icons.local_fire_department_rounded, color: Colors.orange, size: 20),
-              const SizedBox(width: 6),
-              Text(
-                'Streak ${_personalStats['currentStreak'] ?? 0} hari',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(width: 16),
-              const Icon(Icons.star_rounded, color: Colors.amber, size: 20),
-              const SizedBox(width: 6),
-              Text(
-                '${_personalStats['points'] ?? 0} mata',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
+          Row(children: [const Icon(Icons.local_fire_department_rounded, color: Colors.orange, size: 20), const SizedBox(width: 6), Text('Streak ${_personalStats['currentStreak'] ?? 0} hari', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)), const SizedBox(width: 16), const Icon(Icons.star_rounded, color: Colors.amber, size: 20), const SizedBox(width: 6), Text('${_personalStats['points'] ?? 0} mata', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))]),
         ],
       ),
     );
@@ -883,7 +728,6 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
 
   Widget _buildBadgesSection(bool isDarkMode) {
     final badges = _personalStats['badges'] as List<String>? ?? [];
-    
     final allBadges = [
       {'id': 'first_report', 'name': 'Laporan Pertama', 'icon': '🏅', 'desc': 'Hantar laporan pertama anda'},
       {'id': 'reporter_10', 'name': '10 Laporan', 'icon': '🥉', 'desc': 'Hantar 10 laporan'},
@@ -891,52 +735,16 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
       {'id': 'reporter_50', 'name': '50 Laporan', 'icon': '🥇', 'desc': 'Hantar 50 laporan'},
       {'id': 'reporter_100', 'name': '100 Laporan', 'icon': '🏆', 'desc': 'Hantar 100 laporan'},
     ];
-    
     return Wrap(
       spacing: 12,
       runSpacing: 12,
       children: allBadges.map((badge) {
         final earned = badges.contains(badge['id']);
-        
         return Container(
           width: (MediaQuery.of(context).size.width - 52) / 2,
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: earned
-                ? AppTheme.primaryRed.withOpacity(0.15)
-                : (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-            borderRadius: BorderRadius.circular(16),
-            border: earned
-                ? Border.all(color: AppTheme.primaryRed, width: 2)
-                : null,
-          ),
-          child: Column(
-            children: [
-              Text(
-                badge['icon'] as String,
-                style: TextStyle(
-                  fontSize: 32,
-                  color: earned ? null : Colors.grey,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                badge['name'] as String,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: earned
-                      ? (isDarkMode ? Colors.white : Colors.black87)
-                      : Colors.grey,
-                ),
-              ),
-              if (!earned)
-                Text(
-                  badge['desc'] as String,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 10, color: Colors.grey),
-                ),
-            ],
-          ),
+          decoration: BoxDecoration(color: earned ? AppTheme.primaryRed.withOpacity(0.15) : (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05), borderRadius: BorderRadius.circular(16), border: earned ? Border.all(color: AppTheme.primaryRed, width: 2) : null),
+          child: Column(children: [Text(badge['icon'] as String, style: TextStyle(fontSize: 32, color: earned ? null : Colors.grey)), const SizedBox(height: 8), Text(badge['name'] as String, style: TextStyle(fontWeight: FontWeight.bold, color: earned ? (isDarkMode ? Colors.white : Colors.black87) : Colors.grey)), if (!earned) Text(badge['desc'] as String, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.grey))]),
         );
       }).toList(),
     );
@@ -948,27 +756,8 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 18),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
-          ),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.share_rounded, color: Colors.white),
-            SizedBox(width: 12),
-            Text(
-              'Kongsi Impak Anda',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
+        decoration: BoxDecoration(gradient: const LinearGradient(colors: [AppTheme.primaryRed, AppTheme.primaryBlue]), borderRadius: BorderRadius.circular(16)),
+        child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.share_rounded, color: Colors.white), SizedBox(width: 12), Text('Kongsi Impak Anda', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))]),
       ),
     );
   }
@@ -977,7 +766,6 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
     final reports = _personalStats['totalReports'] ?? 0;
     final resolved = _personalStats['resolvedReports'] ?? 0;
     final roads = (_personalStats['roadsImprovedMeters'] ?? 0).toDouble();
-    
     final text = '''
 🦸 Sahabat Assaffal Impact 🦸
 
@@ -986,24 +774,13 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
 • Isu Selesai: $resolved
 • Jalan Diperbaiki: ${roads.toStringAsFixed(0)}m
 
-Sayangi Tungku, Selamatkan Tungku 🛣️
+www.sahabatassaffal.com 🛣️
 
 Sertai saya di Sahabat Assaffal dan lapor kerosakan jalan di kawasan anda! 
 Bersama kita baiki jalan raya kita! 💪
 
 #SahabatAssaffal #LahadDatu #Tungku
 ''';
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Salin: $text'),
-        action: SnackBarAction(
-          label: 'Salin',
-          onPressed: () {
-            // Copy to clipboard
-          },
-        ),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Salin: $text'), action: SnackBarAction(label: 'Salin', onPressed: () {})));
   }
 }

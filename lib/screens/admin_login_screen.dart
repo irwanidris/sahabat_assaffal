@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../services/supabase_service.dart';
 
@@ -35,13 +36,17 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
     });
 
     try {
-      // Verify credentials from database
       final isValid = await _supabaseService.verifyAdminCredentials(username, password);
       
       if (!mounted) return;
       
       if (isValid) {
-        Navigator.pop(context, true); // Return true for successful login
+        // SIMPAN SESI ADMIN
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isAdminLoggedIn', true);
+        await prefs.setInt('lastAdminAction', DateTime.now().millisecondsSinceEpoch);
+        
+        Navigator.pop(context, true);
       } else {
         setState(() {
           _isLoading = false;
@@ -49,11 +54,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
         });
       }
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'Log masuk gagal. Sila semak sambungan anda.';
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Log masuk gagal. Sila semak sambungan anda.';
+        });
+      }
     }
   }
 
@@ -84,7 +90,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Icon - Diubah kepada logo warisan.png
               Container(
                 width: 120,
                 height: 120,
@@ -102,7 +107,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(60),
                   child: Image.asset(
-                    'assets/images/warisan.png',
+                    'assets/images/logo_s_assaffal.png',
                     fit: BoxFit.contain,
                     errorBuilder: (context, error, stackTrace) => const Icon(
                       Icons.admin_panel_settings_rounded,
@@ -113,8 +118,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 ),
               ),
               const SizedBox(height: 32),
-
-              // Title
               Text(
                 'Akses Admin',
                 style: TextStyle(
@@ -132,8 +135,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 ),
               ),
               const SizedBox(height: 40),
-
-              // Login Card
               ClipRRect(
                 borderRadius: BorderRadius.circular(24),
                 child: BackdropFilter(
@@ -149,7 +150,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     ),
                     child: Column(
                       children: [
-                        // Username Field
                         TextField(
                           controller: _usernameController,
                           style: TextStyle(color: isDarkMode ? Colors.white : Colors.black),
@@ -166,8 +166,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-
-                        // Password Field
                         TextField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
@@ -192,8 +190,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                           ),
                           onSubmitted: (_) => _attemptLogin(),
                         ),
-
-                        // Error Message
                         if (_errorMessage != null) ...[
                           const SizedBox(height: 16),
                           Container(
@@ -216,10 +212,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                             ),
                           ),
                         ],
-
                         const SizedBox(height: 24),
-
-                        // Login Button
                         SizedBox(
                           width: double.infinity,
                           height: 56,

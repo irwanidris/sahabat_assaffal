@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/foundation.dart';
+import 'package:onesignal_flutter/onesignal_flutter.dart';
 
 // Client ID yang anda berikan
 const _webClientId = '413886281936-k2pkrgk0f80o7ust7tk8e646lffun9sn.apps.googleusercontent.com';
@@ -35,8 +36,55 @@ class AuthService {
         idToken: idToken,
         accessToken: accessToken,
       );
+
+      // Kemaskini OneSignal Tags selepas login
+      final user = _supabase.auth.currentUser;
+      if (user != null) {
+        final bool isAdmin = user.userMetadata?['is_admin'] == true;
+        final bool isModerator = user.userMetadata?['is_moderator'] == true;
+        final bool isYB = user.userMetadata?['is_yb'] == true;
+        
+        if (isAdmin || isModerator || isYB) {
+          OneSignal.User.addTagWithKey("role", "admin_staff");
+        } else {
+          OneSignal.User.removeTag("role");
+        }
+      }
     } catch (e) {
       debugPrint('Error Google Sign In: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> sendOTP(String phone) async {
+    try {
+      await _supabase.auth.signInWithOtp(
+        phone: phone,
+      );
+    } catch (e) {
+      debugPrint('Error sending OTP: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> verifyOTP(String phone, String token) async {
+    try {
+      final response = await _supabase.auth.verifyOTP(
+        phone: phone,
+        token: token,
+        type: OtpType.sms,
+      );
+      
+      if (response.user != null) {
+        // Tandakan sebagai verified dalam metadata
+        await _supabase.auth.updateUser(
+          UserAttributes(
+            data: {'phone_verified': true},
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error verifying OTP: $e');
       rethrow;
     }
   }
@@ -45,6 +93,7 @@ class AuthService {
     try {
       await _supabase.auth.signOut();
       await _googleSignIn.signOut();
+      OneSignal.User.removeTag("role");
     } catch (e) {
       debugPrint('Error Sign Out: $e');
     }

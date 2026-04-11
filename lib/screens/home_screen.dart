@@ -5,6 +5,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../cubit/reports_cubit.dart';
 import '../cubit/theme_cubit.dart';
@@ -36,7 +38,6 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _deviceId;
   Map<String, bool> _upvoteStatus = {};
 
-  // New Default Coordinates for Lahad Datu Highway
   final double _defaultLat = 5.0392;
   final double _defaultLon = 118.6313;
 
@@ -45,7 +46,130 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _getCurrentLocation();
     _loadDeviceId();
+    _checkFirstLaunch();
     context.read<ReportsCubit>().loadReports();
+  }
+
+  Future<void> _checkFirstLaunch() async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasSeenWelcome = prefs.getBool('hasSeenWelcome') ?? false;
+    
+    if (!hasSeenWelcome) {
+      if (mounted) {
+        Future.delayed(const Duration(seconds: 1), () {
+          _showWelcomeDialog();
+        });
+      }
+    }
+  }
+
+  void _showWelcomeDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+        title: const Column(
+          children: [
+            Text(
+              'Selamat Datang ke\nSahabat Assaffal',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Gambar YB Assaffal
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.asset(
+                  'assets/images/yb_assaffal.png',
+                  height: 180,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      height: 100,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.person_rounded, size: 50, color: Colors.grey),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Platform komuniti khas untuk warga Tungku & Lahad Datu menyuarakan masalah infrastruktur demi kesejahteraan bersama.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 20),
+              _buildFeatureInfo(
+                Icons.campaign_rounded,
+                'Aduan Terus',
+                'Memudahkan aduan dihantar terus kepada Pejabat YB Assaffal P. Alian untuk dipanjangkan ke pihak berkuasa.'
+              ),
+              const SizedBox(height: 12),
+              _buildFeatureInfo(
+                Icons.analytics_outlined,
+                'Ketelusan Data',
+                'Pantau status aduan anda dan lihat impak sumbangan anda pada komuniti.'
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Bersama Kita Realisasikan Sejahtera Bersama',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryBlue, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('hasSeenWelcome', true);
+                if (context.mounted) Navigator.pop(context);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryRed,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('Mula Sekarang', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeatureInfo(IconData icon, String title, String desc) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: AppTheme.primaryBlue),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(desc, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _loadDeviceId() async {
@@ -242,11 +366,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(20),
                     child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                         decoration: BoxDecoration(
-                          color: (isDarkMode ? Colors.black : Colors.white).withOpacity(0.7),
+                          color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
                             color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
@@ -257,21 +381,36 @@ class _HomeScreenState extends State<HomeScreen> {
                             Container(
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
-                                ),
+                                color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
                                 borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.05),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  )
+                                ],
                               ),
-                              child: const Icon(Icons.location_on, color: Colors.white, size: 20),
+                              child: Image.asset(
+                                'assets/images/app_icon.png',
+                                width: 24,
+                                height: 24,
+                                fit: BoxFit.contain,
+                              ),
                             ),
-                            const SizedBox(width: 12),
-                            Text(
-                              'Sahabat Assaffal',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                                color: isDarkMode ? Colors.white : Colors.black87,
-                              ),
+                            const SizedBox(width: 14),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Teroka',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                    color: isDarkMode ? Colors.white : Colors.black87,
+                                  ),
+                                ),
+                              ],
                             ),
                             const Spacer(),
                             BlocBuilder<ReportsCubit, ReportsState>(
@@ -295,26 +434,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                         ),
                                       ),
                                     ],
-                                  ),
-                                );
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            BlocBuilder<ThemeCubit, ThemeState>(
-                              builder: (context, state) {
-                                return GestureDetector(
-                                  onTap: () => context.read<ThemeCubit>().toggleTheme(),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(
-                                      color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Icon(
-                                      state.isDark ? Icons.wb_sunny_rounded : Icons.nightlight_round,
-                                      size: 20,
-                                      color: state.isDark ? Colors.amber : Colors.indigo,
-                                    ),
                                   ),
                                 );
                               },
@@ -345,7 +464,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: isDarkMode ? Colors.white : Colors.black87,
                           ),
                           decoration: InputDecoration(
-                            hintText: 'Cari di Lahad Datu...',
+                            hintText: 'Cari di Tungku...',
                             hintStyle: TextStyle(
                               color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.5),
                             ),
@@ -673,8 +792,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Image.network(
                       report.imageUrl,
                       height: 180,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
+                      width: double.infinity, fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => Container(
                         height: 180,
                         color: isDarkMode ? Colors.grey.shade800 : Colors.grey.shade200,
@@ -746,10 +864,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      Icon(Icons.person_rounded, size: 16, color: Colors.grey.shade500),
+                      Icon(Icons.calendar_today, size: 14, color: Colors.grey.shade500),
                       const SizedBox(width: 6),
                       Text(
-                        'Oleh: ${report.reporterName ?? 'Tanpa Nama'}',
+                        'Dilapor pada: ${DateFormat('dd/MM/yyyy HH:mm').format(report.createdAtMYT)}',
                         style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
                       ),
                     ],
@@ -976,7 +1094,7 @@ class _InlineCommentsSectionState extends State<_InlineCommentsSection> {
           else if (_comments.isEmpty) const Center(child: Text('Belum ada komen', style: TextStyle(fontSize: 12, color: Colors.grey)))
           else ..._comments.map((c) => ListTile(
             dense: true,
-            title: Text(c['device_users']?['nickname'] ?? 'Sahabat', style: const TextStyle(fontWeight: FontWeight.bold)),
+            title: Text(c['user_name'] ?? 'Sahabat', style: const TextStyle(fontWeight: FontWeight.bold)),
             subtitle: Text(c['content'] ?? ''),
           )),
           Padding(
