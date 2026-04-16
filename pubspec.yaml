@@ -1,8 +1,8 @@
-name: pothole_hero
-description: "A new Flutter project."
+name: sahabat_assaffal
+description: "Sahabat Assaffal - Road safety reporting app"
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.9.2
@@ -48,6 +48,16 @@ flutter_launcher_icons:
   image_path: "assets/images/app_icon.png"
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/images/app_icon.png"
+
+flutter_native_splash:
+  color: "#FFFFFF"
+  image: "assets/images/logo_s_assaffal.png"
+  android_12:
+    image: "assets/images/logo_s_assaffal.png"
+    color: "#FFFFFF"
+  android: true
+  ios: true
+  web: false
 
 flutter:
   uses-material-design: true

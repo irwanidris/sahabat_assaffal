@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/onesignal_config.dart';
@@ -48,17 +49,19 @@ class CommunityService {
   }
 
   // ============================================
-  // UPVOTES
+  // UPVOTES (Deprecated in favor of SupabaseService)
   // ============================================
 
+  @Deprecated('Use SupabaseService.toggleUpvote instead')
   Future<bool> hasUpvoted(String reportId) async {
-    final deviceId = await _deviceService.getDeviceId();
+    final user = _client.auth.currentUser;
+    if (user == null) return false;
     try {
       final response = await _client
-          .from('upvotes')
+          .from('pothole_upvotes')
           .select('id')
           .eq('report_id', int.parse(reportId))
-          .eq('device_id', deviceId)
+          .eq('user_id', user.id)
           .maybeSingle();
       return response != null;
     } catch (e) {
@@ -66,38 +69,13 @@ class CommunityService {
     }
   }
 
+  @Deprecated('Use SupabaseService.toggleUpvote instead')
   Future<bool> toggleUpvote(String reportId) async {
-    final deviceId = await _deviceService.getDeviceId();
-    final reportIdInt = int.parse(reportId);
+    final user = _client.auth.currentUser;
+    if (user == null) return false;
     
-    try {
-      final hasVoted = await hasUpvoted(reportId);
-      
-      if (hasVoted) {
-        await _client
-            .from('upvotes')
-            .delete()
-            .eq('report_id', reportIdInt)
-            .eq('device_id', deviceId);
-        
-        await _client.rpc('decrement_upvote_count', params: {'p_report_id': reportIdInt});
-        return false;
-      } else {
-        await _client.from('upvotes').insert({
-          'report_id': reportIdInt,
-          'device_id': deviceId,
-        });
-        
-        await _client.rpc('increment_upvote_count', params: {'p_report_id': reportIdInt});
-        await _deviceService.addPoints(5, reason: 'upvote');
-
-        _notifyOwner(reportId, "Seseorang menyokong laporan anda!", "Laporan kerosakan jalan anda mendapat sokongan baru.");
-        
-        return true;
-      }
-    } catch (e) {
-      return false;
-    }
+    // We should transition all calls to SupabaseService.toggleUpvote(reportId, user.id)
+    return false;
   }
 
   // ============================================
@@ -123,6 +101,7 @@ class CommunityService {
     
     final deviceId = await _deviceService.getDeviceId();
     final fullName = user.userMetadata?['full_name'] ?? 'Pengguna Google';
+    final avatarUrl = user.userMetadata?['avatar_url'] ?? '';
     final isVerified = user.userMetadata?['phone_verified'] == true;
     
     try {
@@ -131,6 +110,7 @@ class CommunityService {
         'device_id': deviceId,
         'user_id': user.id,
         'user_name': fullName,
+        'avatar_url': avatarUrl,
         'content': content.trim(),
         'user_metadata': {
           'phone_verified': isVerified,
@@ -143,19 +123,31 @@ class CommunityService {
       
       return true;
     } catch (e) {
+      debugPrint('Error adding comment: $e');
       return false;
     }
   }
 
   Future<void> _notifyOwner(String reportId, String title, String message) async {
     try {
+      final reportIdInt = int.tryParse(reportId);
+      if (reportIdInt == null) return;
+
       final report = await _client
           .from('pothole_reports')
-          .select('reporter_push_id')
-          .eq('id', int.parse(reportId))
+          .select('reporter_push_id, user_id')
+          .eq('id', reportIdInt)
           .single();
       
       final pushId = report['reporter_push_id'];
+      final ownerId = report['user_id'];
+      final currentUser = _client.auth.currentUser;
+
+      // Jangan hantar notifikasi jika pengomen adalah pemilik laporan itu sendiri
+      if (currentUser != null && ownerId == currentUser.id) {
+        return;
+      }
+
       if (pushId != null && pushId.toString().isNotEmpty) {
         await _sendNotification(
           targetPushId: pushId.toString(),
@@ -164,7 +156,7 @@ class CommunityService {
         );
       }
     } catch (e) {
-      print('Failed to notify owner: $e');
+      debugPrint('Failed to notify owner: $e');
     }
   }
 

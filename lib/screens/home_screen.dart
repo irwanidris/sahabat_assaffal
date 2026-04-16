@@ -2,19 +2,28 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:latlong2/latlong.dart' hide Path;
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../widgets/full_screen_image.dart';
+import '../widgets/inline_comments_section.dart';
 import '../cubit/reports_cubit.dart';
 import '../cubit/theme_cubit.dart';
-import '../models/pothole_report.dart';
+import '../models/assaffal_report.dart';
 import '../theme/app_theme.dart';
 import '../services/supabase_service.dart';
 import '../services/device_service.dart';
 import '../services/community_service.dart';
+import '../services/share_service.dart';
+import '../services/auth_service.dart';
+import 'notifications_list_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,11 +32,14 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   final SupabaseService _supabaseService = SupabaseService();
   final DeviceService _deviceService = DeviceService();
   final CommunityService _communityService = CommunityService();
+  final ShareService _shareService = ShareService();
+  final AuthService _authService = AuthService();
+  late AnimationController _beepController;
   LatLng? _currentLocation;
   LatLng? _selectedLocation;
   bool _isLoading = true;
@@ -37,6 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showSearchResults = false;
   String? _deviceId;
   Map<String, bool> _upvoteStatus = {};
+  String _activeFilter = 'Semua'; // Penapis aktif: Semua, Minggu Ini, Minggu Lalu, Bulan Lalu
 
   final double _defaultLat = 5.0392;
   final double _defaultLon = 118.6313;
@@ -44,10 +57,91 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _beepController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
     _getCurrentLocation();
     _loadDeviceId();
     _checkFirstLaunch();
     context.read<ReportsCubit>().loadReports();
+    _setupLocationListener();
+  }
+
+  void _setupLocationListener() {
+    Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 50, // Trigger setiap 50 meter
+      ),
+    ).listen((Position position) {
+      if (mounted) {
+        setState(() {
+          _currentLocation = LatLng(position.latitude, position.longitude);
+        });
+        _checkNearbyReports(position);
+      }
+    });
+  }
+
+  void _checkNearbyReports(Position position) async {
+    final state = context.read<ReportsCubit>().state;
+    if (state is! ReportsLoaded) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final String lastNotifiedId = prefs.getString('last_notified_report_id') ?? '';
+
+    for (var report in state.reports) {
+      // Hanya laporan yang belum disahkan (upvote_count == 0 atau status 'active' tapi masih baru)
+      // Dan bukan laporan sendiri
+      if (report.status != 'resolved' && report.status != 'fake' && report.upvoteCount == 0) {
+        double distance = Geolocator.distanceBetween(
+          position.latitude,
+          position.longitude,
+          report.latitude,
+          report.longitude,
+        );
+
+        // Jika dalam radius 200 meter
+        if (distance < 200 && report.id != lastNotifiedId) {
+          _showNearbyNotification(report);
+          await prefs.setString('last_notified_report_id', report.id);
+          break; // Elakkan spam banyak notifikasi serentak
+        }
+      }
+    }
+  }
+
+  void _showNearbyNotification(AssaffalReport report) {
+    // 1. Tunjukkan Notifikasi Tempatan (Local UI Snackbar/Dialog)
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.amber),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Aduan Berhampiran: ${report.category} di ${report.areaName}. Sila bantu sahkan!',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: 'LIHAT',
+          textColor: Colors.amber,
+          onPressed: () {
+            _mapController.move(LatLng(report.latitude, report.longitude), 17);
+            _showReportDetails(report);
+          },
+        ),
+        duration: const Duration(seconds: 8),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+      ),
+    );
   }
 
   Future<void> _checkFirstLaunch() async {
@@ -70,24 +164,21 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
-        title: const Column(
-          children: [
-            Text(
-              'Selamat Datang ke\nSahabat Assaffal',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-            ),
-          ],
-        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Gambar YB Assaffal
+              const Text(
+                'Sahabat Assaffal',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+              ),
+              const SizedBox(height: 16),
+              // Gambar Sahabat Assaffal
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: Image.asset(
-                  'assets/images/yb_assaffal.png',
+                  'assets/images/sahabat_assaffal.png',
                   height: 180,
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) {
@@ -104,26 +195,36 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 20),
+              // Barisan Logo Penyelenggara
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildPartnerLogo('assets/images/logo_globinaco.png', 'Globinaco'),
+                  _buildPartnerLogo('assets/images/logo_majlis_daerah.png', 'Majlis Daerah'),
+                  _buildPartnerLogo('assets/images/logo_jkr.png', 'JKR'),
+                ],
+              ),
+              const SizedBox(height: 20),
               const Text(
-                'Platform komuniti khas untuk warga Tungku & Lahad Datu menyuarakan masalah infrastruktur demi kesejahteraan bersama.',
+                'Inisiatif peribadi YB Assaffal bagi memberi ruang kepada masyarakat untuk menarik perhatian Syarikat Konsesi, Majlis Daerah, JKR dan perhatian umum terhadap isu jalan raya.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
               ),
               const SizedBox(height: 20),
               _buildFeatureInfo(
                 Icons.campaign_rounded,
-                'Aduan Terus',
-                'Memudahkan aduan dihantar terus kepada Pejabat YB Assaffal P. Alian untuk dipanjangkan ke pihak berkuasa.'
+                'Lapor & Pantau',
+                'Tarik perhatian syarikat penyelenggara (Globinaco), Majlis Daerah, dan JKR melalui kuasa pemantauan komuniti.'
               ),
               const SizedBox(height: 12),
               _buildFeatureInfo(
-                Icons.analytics_outlined,
-                'Ketelusan Data',
-                'Pantau status aduan anda dan lihat impak sumbangan anda pada komuniti.'
+                Icons.stars_rounded,
+                'Sumbang & Kumpul Mata',
+                'Dapatkan mata ganjaran bagi setiap aduan dan verifikasi yang anda lakukan untuk komuniti.'
               ),
               const SizedBox(height: 20),
               const Text(
-                'Bersama Kita Realisasikan Sejahtera Bersama',
+                'Bersama Kita Pastikan Jalan Raya Selamat',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryBlue, fontSize: 13),
               ),
@@ -150,6 +251,32 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildPartnerLogo(String path, String label) {
+    return Column(
+      children: [
+        Image.asset(
+          path,
+          height: 36,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) => Container(
+            height: 36,
+            width: 36,
+            decoration: BoxDecoration(
+              color: Colors.grey.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.business_rounded, size: 18, color: Colors.grey),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey),
+        ),
+      ],
     );
   }
 
@@ -303,7 +430,39 @@ class _HomeScreenState extends State<HomeScreen> {
               height: size.height,
               child: BlocBuilder<ReportsCubit, ReportsState>(
                 builder: (context, state) {
-                  final reports = state is ReportsLoaded ? state.reports : <PotholeReport>[];
+                  final allReports = state is ReportsLoaded ? state.reports : <AssaffalReport>[];
+                  
+                  // LOGIK PENAPIS MASA
+                  final now = DateTime.now();
+                  final filteredByTime = allReports.where((report) {
+                    if (_activeFilter == 'Semua') return true;
+                    
+                    final reportDate = report.createdAt;
+                    
+                    if (_activeFilter == 'Minggu Ini') {
+                      final firstDayOfWeek = now.subtract(Duration(days: now.weekday - 1));
+                      final start = DateTime(firstDayOfWeek.year, firstDayOfWeek.month, firstDayOfWeek.day);
+                      return reportDate.isAfter(start);
+                    }
+                    
+                    if (_activeFilter == 'Minggu Lalu') {
+                      final firstDayOfThisWeek = now.subtract(Duration(days: now.weekday - 1));
+                      final firstDayOfLastWeek = firstDayOfThisWeek.subtract(const Duration(days: 7));
+                      final lastDayOfLastWeek = firstDayOfThisWeek.subtract(const Duration(milliseconds: 1));
+                      return reportDate.isAfter(firstDayOfLastWeek) && reportDate.isBefore(lastDayOfLastWeek);
+                    }
+                    
+                    if (_activeFilter == 'Bulan Lalu') {
+                      final firstDayOfLastMonth = DateTime(now.year, now.month - 1, 1);
+                      final lastDayOfLastMonth = DateTime(now.year, now.month, 0, 23, 59, 59);
+                      return reportDate.isAfter(firstDayOfLastMonth) && reportDate.isBefore(lastDayOfLastMonth);
+                    }
+                    
+                    return true;
+                  }).toList();
+
+                  // TAPISAN: Sembunyikan laporan 'fake' dari pandangan awam
+                  final reports = filteredByTime.where((r) => r.status != 'fake').toList();
 
                   return FlutterMap(
                     mapController: _mapController,
@@ -315,12 +474,20 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     children: [
                       TileLayer(
+                        key: ValueKey(isDarkMode ? 'dark' : 'light'),
                         urlTemplate: isDarkMode
                             ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
                             : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                         subdomains: const ['a', 'b', 'c'],
                         userAgentPackageName: 'com.rhinoresources.sahabat_assaffal',
                         maxZoom: 19,
+                        tileBuilder: (context, tileWidget, tile) {
+                          return AnimatedOpacity(
+                            duration: const Duration(milliseconds: 500),
+                            opacity: 1.0,
+                            child: tileWidget,
+                          );
+                        },
                       ),
                       MarkerLayer(
                         markers: [
@@ -341,10 +508,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                 size: 50,
                               ),
                             ),
-                          ...reports.map((report) => Marker(
+                          ...reports.where((report) {
+                            // Sembunyikan laporan resolved yang sudah lebih 72 jam DAN disahkan komuniti (5 undi)
+                            if (report.status == 'resolved' && report.verifiedResolved >= 5) {
+                              final ageInHours = DateTime.now().difference(report.createdAt).inHours;
+                              return ageInHours < 72;
+                            }
+                            return true;
+                          }).map((report) => Marker(
                                 point: LatLng(report.latitude, report.longitude),
-                                width: 44,
-                                height: 44,
+                                width: 140, // Besarkan sedikit untuk tooltip yang panjang
+                                height: 110,
+                                alignment: Alignment.center,
                                 child: GestureDetector(
                                   onTap: () => _showReportDetails(report),
                                   child: _buildPotholeMarker(report),
@@ -358,111 +533,39 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                        decoration: BoxDecoration(
-                          color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.05),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  )
-                                ],
-                              ),
-                              child: Image.asset(
-                                'assets/images/app_icon.png',
-                                width: 24,
-                                height: 24,
-                                fit: BoxFit.contain,
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Teroka',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 18,
-                                    color: isDarkMode ? Colors.white : Colors.black87,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const Spacer(),
-                            BlocBuilder<ReportsCubit, ReportsState>(
-                              builder: (context, state) {
-                                final count = state is ReportsLoaded ? state.totalCount : 0;
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.red.withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.warning_rounded, size: 14, color: Colors.red),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        '$count',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.red,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
+          // GLASS HEADER UNTUK HOME
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 10,
+            left: 16,
+            right: 16,
+            child: _buildGlassHeader(isDarkMode),
+          ),
+
+          // SEARCH BAR & FILTERS (DITURUNKAN)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 90,
+            left: 20,
+            right: 20,
+            child: Column(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: (isDarkMode ? Colors.black : Colors.white).withOpacity(0.7),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: (isDarkMode ? Colors.black : Colors.white).withOpacity(0.7),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
-                          ),
+                      child: TextField(
+                        controller: _searchController,
+                        onChanged: _searchLocation,
+                        style: TextStyle(
+                          color: isDarkMode ? Colors.white : Colors.black87,
                         ),
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: _searchLocation,
-                          style: TextStyle(
-                            color: isDarkMode ? Colors.white : Colors.black87,
-                          ),
                           decoration: InputDecoration(
                             hintText: 'Cari di Tungku...',
                             hintStyle: TextStyle(
@@ -494,6 +597,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+
+                  // PENAPIS MASA (FILTER CHIPS)
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildFilterChip('Semua', Icons.map_rounded, isDarkMode),
+                        _buildFilterChip('Minggu Ini', Icons.calendar_view_week_rounded, isDarkMode),
+                        _buildFilterChip('Minggu Lalu', Icons.history_rounded, isDarkMode),
+                        _buildFilterChip('Bulan Lalu', Icons.event_note_rounded, isDarkMode),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
 
                   if (_showSearchResults && _searchResults.isNotEmpty)
                     Container(
@@ -554,7 +672,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-          ),
 
           Positioned(
             right: 16,
@@ -613,7 +730,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildLegendItem(Colors.orange, 'Proses', isDarkMode),
+                      _buildLegendItem(Colors.orange, 'Belum Disahkan', isDarkMode),
+                      const SizedBox(height: 8),
+                      _buildLegendItem(AppTheme.primaryRed, 'Aktif', isDarkMode),
                       const SizedBox(height: 8),
                       _buildLegendItem(Colors.green, 'Selesai', isDarkMode),
                     ],
@@ -662,32 +781,167 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildGlassHeader(bool isDarkMode) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1)),
+          ),
+          child: Row(
+            children: [
+              GestureDetector(
+                onLongPress: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Logout Sekarang?'),
+                      content: const Text('Adakah anda pasti mahu keluar dari akaun ini?'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Tidak')),
+                        TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Ya', style: TextStyle(color: Colors.red))),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    await _authService.signOut();
+                    if (mounted) Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+                  }
+                },
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Image.asset(
+                    'assets/images/app_icon.png',
+                    width: 32,
+                    height: 32,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.report_problem),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Sahabat Assaffal',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: isDarkMode ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                  Text(
+                    'Suara Kita Semua',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      fontStyle: FontStyle.italic,
+                      color: AppTheme.primaryRed,
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              IconButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const NotificationsListScreen()),
+                  );
+                },
+                icon: Icon(
+                  Icons.notifications_none_rounded,
+                  color: isDarkMode ? Colors.white70 : Colors.black87,
+                  size: 24,
+                ),
+              ),
+              IconButton(
+                onPressed: () => context.read<ThemeCubit>().toggleTheme(),
+                icon: Icon(
+                  isDarkMode ? Icons.wb_sunny_rounded : Icons.nightlight_round, 
+                  color: isDarkMode ? Colors.amber : Colors.indigo,
+                  size: 20,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCurrentLocationMarker() {
     return Stack(
       alignment: Alignment.center,
+      clipBehavior: Clip.none,
       children: [
+        // Outer glow/pulse area
         Container(
-          width: 60,
-          height: 60,
+          width: 50,
+          height: 50,
           decoration: BoxDecoration(
-            color: AppTheme.primaryRed.withOpacity(0.2),
+            color: AppTheme.primaryBlue.withOpacity(0.15),
             shape: BoxShape.circle,
           ),
         ),
+        // Human Icon
         Container(
-          width: 26,
-          height: 26,
+          width: 32,
+          height: 32,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
-            ),
+            color: Colors.white,
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 3),
+            border: Border.all(color: AppTheme.primaryBlue, width: 2),
             boxShadow: [
               BoxShadow(
-                color: AppTheme.primaryRed.withOpacity(0.5),
-                blurRadius: 10,
-                spreadRadius: 2,
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.person_pin_circle_rounded,
+            color: AppTheme.primaryBlue,
+            size: 24,
+          ),
+        ),
+        // Tooltip "Anda Disini"
+        Positioned(
+          top: -35,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Text(
+                  'Anda Disini',
+                  style: TextStyle(
+                    color: AppTheme.primaryBlue,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              CustomPaint(
+                size: const Size(10, 5),
+                painter: _TrianglePainter(Colors.white),
               ),
             ],
           ),
@@ -696,11 +950,17 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildPotholeMarker(PotholeReport report) {
+  Widget _buildPotholeMarker(AssaffalReport report) {
     final isResolved = report.status == 'resolved';
-    final color = isResolved ? Colors.green : Colors.orange;
+    final isActive = report.upvoteCount > 0;
+    final isPending = !isResolved && !isActive;
+    final color = isResolved 
+        ? Colors.green 
+        : (isActive ? AppTheme.primaryRed : Colors.orange);
 
-    return Container(
+    Widget markerIcon = Container(
+      width: 44,
+      height: 44,
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
@@ -719,6 +979,74 @@ class _HomeScreenState extends State<HomeScreen> {
         size: 20,
       ),
     );
+
+    if (isPending || isActive) {
+      final tooltipText = isPending ? 'Perlu Undian Anda' : 'AWAS! LUBANG JALAN';
+      final tooltipColor = isPending ? Colors.orange : AppTheme.primaryRed;
+      final bgColor = isPending ? Colors.white : AppTheme.primaryRed;
+      final textColor = isPending ? (Theme.of(context).brightness == Brightness.dark ? Colors.orange.shade400 : Colors.orange) : Colors.white;
+
+      return RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _beepController,
+          child: markerIcon,
+          builder: (context, child) {
+            return Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                // Beeping/Pulsing effect
+                Container(
+                  width: 44 + (20 * _beepController.value),
+                  height: 44 + (20 * _beepController.value),
+                  decoration: BoxDecoration(
+                    color: tooltipColor.withOpacity(0.5 * (1 - _beepController.value)),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                child!,
+                // Tooltip
+                Positioned(
+                  top: -38,
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: bgColor,
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 6,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          tooltipText,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      CustomPaint(
+                        size: const Size(12, 6),
+                        painter: _TrianglePainter(bgColor),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    return markerIcon;
   }
 
   Widget _buildLegendItem(Color color, String label, bool isDarkMode) {
@@ -752,7 +1080,56 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showReportDetails(PotholeReport report) {
+  Widget _buildFilterChip(String label, IconData icon, bool isDarkMode) {
+    final isSelected = _activeFilter == label;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        onTap: () => setState(() => _activeFilter = label),
+        borderRadius: BorderRadius.circular(12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected 
+                    ? AppTheme.primaryBlue.withOpacity(0.8) 
+                    : (isDarkMode ? Colors.black : Colors.white).withOpacity(0.6),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSelected ? AppTheme.primaryBlue : (isDarkMode ? Colors.white24 : Colors.black12),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon, 
+                    size: 14, 
+                    color: isSelected ? Colors.white : (isDarkMode ? Colors.white70 : Colors.black87)
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? Colors.white : (isDarkMode ? Colors.white70 : Colors.black87),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showReportDetails(AssaffalReport report) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     bool hasUpvoted = _upvoteStatus[report.id] ?? false;
     int upvoteCount = report.upvoteCount;
@@ -787,18 +1164,154 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: Image.network(
-                      report.imageUrl,
-                      height: 180,
-                      width: double.infinity, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        height: 180,
-                        color: isDarkMode ? Colors.grey.shade800 : Colors.grey.shade200,
-                        child: const Icon(Icons.broken_image_rounded, size: 50),
+                  // Paparan Gambar (Before/After logic)
+                  Stack(
+                    children: [
+                      Column(
+                        children: [
+                          if (report.resolvedImageUrl != null) ...[
+                            const Text(
+                              'BUKTI SELESAI (OLEH KOMUNITI):',
+                              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.primaryBlue, letterSpacing: 1),
+                            ),
+                            const SizedBox(height: 8),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(20),
+                              child: GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => FullScreenImage(
+                                        imageUrl: report.resolvedImageUrl!,
+                                        tag: 'home-resolved-${report.id}',
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: Hero(
+                                  tag: 'home-resolved-${report.id}',
+                                  child: Image.network(
+                                    report.resolvedImageUrl!,
+                                    height: 200,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'GAMBAR ASAL ADUAN:',
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 1),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => FullScreenImage(
+                                      imageUrl: report.imageUrl,
+                                      tag: 'home-main-${report.id}',
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Hero(
+                                tag: 'home-main-${report.id}',
+                                child: Image.network(
+                                  report.imageUrl,
+                                  height: report.resolvedImageUrl != null ? 120 : 180,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    height: 180,
+                                    color: isDarkMode ? Colors.grey.shade800 : Colors.grey.shade200,
+                                    child: const Icon(Icons.broken_image_rounded, size: 50),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
+                      // Lencana "Disahkan Komuniti"
+                      if (report.verifiedStillExists >= 5 && report.status != 'resolved')
+                        Positioned(
+                          top: 10,
+                          right: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade700,
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.3),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.verified_rounded, color: Colors.white, size: 14),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Disahkan Komuniti',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      // Lencana "Selesai" (5 undian & < 72 jam)
+                      if (report.status == 'resolved' && 
+                          report.verifiedResolved >= 5 && 
+                          DateTime.now().difference(report.createdAt).inHours < 72)
+                        Positioned(
+                          top: 10,
+                          left: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryBlue,
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.3),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.task_alt_rounded, color: Colors.white, size: 14),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Selesai',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   
@@ -808,20 +1321,56 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                         decoration: BoxDecoration(
                           color: report.status == 'resolved'
-                              ? Colors.green.withOpacity(0.15)
-                              : Colors.orange.withOpacity(0.15),
+                              ? AppTheme.primaryBlue.withOpacity(0.15)
+                              : (report.upvoteCount > 0 ? AppTheme.primaryRed.withOpacity(0.15) : Colors.grey.withOpacity(0.15)),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
-                          report.status == 'resolved' ? 'SELESAI' : 'PROSES',
+                          report.status == 'resolved' 
+                              ? 'SELESAI' 
+                              : (report.upvoteCount > 0 ? 'AKTIF' : 'BELUM DISAHKAN'),
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
-                            color: report.status == 'resolved' ? Colors.green : Colors.orange,
+                            color: report.status == 'resolved' 
+                                ? AppTheme.primaryBlue 
+                                : (report.upvoteCount > 0 ? AppTheme.primaryRed : Colors.grey),
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
+                      // KOORDINAT GPS BUTTON
+                      InkWell(
+                        onTap: () async {
+                          final url = 'https://www.google.com/maps/search/?api=1&query=${report.latitude},${report.longitude}';
+                          if (await canLaunchUrl(Uri.parse(url))) {
+                            await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.navigation_rounded, size: 14, color: Colors.blue),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${report.latitude.toStringAsFixed(4)}, ${report.longitude.toStringAsFixed(4)}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                         decoration: BoxDecoration(
@@ -880,66 +1429,120 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        GestureDetector(
-                          onTap: () async {
-                            if (_deviceId == null) return;
-                            try {
-                              final isNowUpvoted = await _supabaseService.toggleUpvote(report.id, _deviceId!);
-                              setModalState(() {
-                                hasUpvoted = isNowUpvoted;
-                                upvoteCount += isNowUpvoted ? 1 : -1;
-                              });
-                              setState(() {
-                                _upvoteStatus[report.id] = isNowUpvoted;
-                              });
-                              if (mounted) {
-                                context.read<ReportsCubit>().loadReports();
-                              }
-                            } catch (e) {
-                              debugPrint('Upvote failed: $e');
-                            }
-                          },
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                            decoration: BoxDecoration(
-                              gradient: hasUpvoted
-                                  ? const LinearGradient(
-                                      colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
-                                    )
-                                  : null,
-                              color: hasUpvoted ? null : (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  hasUpvoted ? Icons.thumb_up : Icons.thumb_up_outlined,
-                                  size: 20,
-                                  color: hasUpvoted ? Colors.white : (isDarkMode ? Colors.white70 : Colors.black54),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () async {
+                                final user = _authService.currentUser;
+                                if (user == null) {
+                                  _showAuthRequiredDialog();
+                                  return;
+                                }
+                                
+                                // Sekat jika aduan sendiri
+                                if (report.isOwnReport(user.id, currentDeviceId: _deviceId)) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Anda tidak boleh menyokong laporan anda sendiri.')),
+                                  );
+                                  return;
+                                }
+
+                                try {
+                                  final isNowUpvoted = await _supabaseService.toggleUpvote(report.id, user.id);
+                                  setModalState(() {
+                                    hasUpvoted = isNowUpvoted;
+                                    upvoteCount += isNowUpvoted ? 1 : -1;
+                                  });
+                                  setState(() {
+                                    _upvoteStatus[report.id] = isNowUpvoted;
+                                  });
+                                  if (mounted) {
+                                    context.read<ReportsCubit>().loadReports();
+                                  }
+                                } catch (e) {
+                                  debugPrint('Upvote failed: $e');
+                                }
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                decoration: BoxDecoration(
+                                  gradient: hasUpvoted
+                                      ? const LinearGradient(
+                                          colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
+                                        )
+                                      : null,
+                                  color: hasUpvoted ? null : (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '$upvoteCount',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: hasUpvoted ? Colors.white : (isDarkMode ? Colors.white70 : Colors.black54),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      hasUpvoted ? Icons.thumb_up : Icons.thumb_up_outlined,
+                                      size: 20,
+                                      color: hasUpvoted ? Colors.white : (isDarkMode ? Colors.white70 : Colors.black54),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '$upvoteCount',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: hasUpvoted ? Colors.white : (isDarkMode ? Colors.white70 : Colors.black54),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            // BUTANG SHARE BARU
+                            Expanded(
+                              child: InkWell(
+                                onTap: () => _shareService.shareReport(report),
+                                borderRadius: BorderRadius.circular(12),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryBlue,
+                                    borderRadius: BorderRadius.circular(12),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppTheme.primaryBlue.withOpacity(0.2),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.share_rounded, color: Colors.white, size: 18),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'KONGSI ADUAN',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Text(
-                            '${upvoteCount + 1} orang menyokong laporan ini',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: isDarkMode ? Colors.white70 : Colors.black54,
-                            ),
+                        const SizedBox(height: 12),
+                        Text(
+                          '${upvoteCount + 1} orang menyokong laporan ini',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                            color: isDarkMode ? Colors.white60 : Colors.black54,
                           ),
                         ),
                       ],
@@ -947,16 +1550,352 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 20),
                   
-                  _InlineCommentsSection(
+                  InlineCommentsSection(
                     reportId: report.id,
                     communityService: _communityService,
                     isDarkMode: isDarkMode,
                   ),
+                  const SizedBox(height: 24),
+
+                  // BUTANG UTAMA UNTUK BUKA POP-UP VOTING
+                  if (report.status != 'resolved' && report.status != 'fake') ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _showVerificationDialog(report, isDarkMode),
+                        icon: const Icon(Icons.verified_user_rounded, color: Colors.white),
+                        label: const Text(
+                          'BETUL KA ADA LUBANG?',
+                          style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                 ],
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  void _showAuthRequiredDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Column(
+          children: [
+            Icon(Icons.lock_outline_rounded, size: 48, color: AppTheme.primaryRed),
+            SizedBox(height: 16),
+            Text(
+              'Log Masuk Diperlukan',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Anda perlu log masuk untuk menyokong laporan atau mengesahkan keadaan di lokasi.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('KEMUDIAN', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                await _authService.signInWithGoogle();
+                if (mounted) setState(() {});
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Gagal Log Masuk: $e'))
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryRed,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('LOG MASUK', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _verifyReport(AssaffalReport report, String type) async {
+    final user = _authService.currentUser;
+    if (user == null) {
+      _showAuthRequiredDialog();
+      return;
+    }
+
+    // Tunjukkan loading sekejap semasa semak GPS (LAKUKAN SEMAKAN GPS SEBELUM KAMERA)
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+              SizedBox(width: 15),
+              Text('Menyemak lokasi anda...'),
+            ],
+          ),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
+
+    try {
+      // 1. Dapatkan lokasi terkini yang tepat
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // 2. Kira jarak antara pengguna dan aduan (dalam meter)
+      double distanceInMeters = Geolocator.distanceBetween(
+        position.latitude,
+        position.longitude,
+        report.latitude,
+        report.longitude,
+      );
+
+      // 3. Semak radius (1km / 1000m)
+      if (distanceInMeters > 1000) {
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  Icon(Icons.location_off_rounded, color: Colors.red),
+                  SizedBox(width: 10),
+                  Text('Tiada Di Lokasi'),
+                ],
+              ),
+              content: const Text(
+                'Anda tidak layak mengundi kerana tiada di lokasi berhampiran aduan (Radius > 1km).',
+                style: TextStyle(fontSize: 16),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('FAHAM', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+
+      // Jika pilih 'Dah Selesai', minta gambar bukti (HANYA SELEPAS SEMAKAN GPS BERJAYA)
+      String? proofImageUrl;
+      if (type == 'resolved') {
+        final ImagePicker picker = ImagePicker();
+        final XFile? image = await picker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 70,
+          maxWidth: 1200,
+        );
+
+        if (image == null) return; // Batal jika tiada gambar
+
+        // Tunjukkan loading muat naik
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Memuat naik gambar bukti...'), duration: Duration(seconds: 2)),
+          );
+        }
+
+        try {
+          proofImageUrl = await _supabaseService.uploadImage(File(image.path));
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Gagal muat naik gambar: $e'), backgroundColor: Colors.red),
+            );
+          }
+          return;
+        }
+      }
+
+      // 4. Jika dalam radius, teruskan proses verifikasi
+      await _supabaseService.verifyReportCommunity(report.id, user.id, type, imageUrl: proofImageUrl);
+      
+      if (mounted) {
+        Navigator.pop(context); // Tutup bottom sheet
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Terima kasih! Maklum balas anda telah direkodkan.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        context.read<ReportsCubit>().loadReports(); // Refresh data
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().contains('location') 
+              ? 'Sila aktifkan GPS anda untuk mengundi.' 
+              : e.toString().replaceAll('Exception: ', '')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showVerificationDialog(AssaffalReport report, bool isDarkMode) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDarkMode ? const Color(0xFF1a1a2e) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Column(
+          children: [
+            const Icon(Icons.verified_user_rounded, size: 40, color: AppTheme.primaryBlue),
+            const SizedBox(height: 12),
+            Text(
+              'SAHKAN STATUS',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: isDarkMode ? Colors.white : Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              report.verifiedStillExists >= 5 
+                ? 'Adakah aduan ini masih di sini?'
+                : 'Adakah masalah ini masih wujud?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.normal,
+                color: isDarkMode ? Colors.white60 : Colors.black54,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+          _buildWazeButton(
+            icon: Icons.error_outline_rounded,
+            label: 'Masih Ada',
+            color: report.isOwnReport(_authService.currentUser?.id, currentDeviceId: _deviceId) ? Colors.grey : AppTheme.primaryRed,
+            count: report.verifiedStillExists,
+            onTap: report.isOwnReport(_authService.currentUser?.id, currentDeviceId: _deviceId)
+                ? () {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Anda tidak boleh mengundi laporan sendiri.')));
+                  }
+                : () {
+                    Navigator.pop(context);
+                    _verifyReport(report, 'exists');
+                  },
+            isDarkMode: isDarkMode,
+          ),
+          const SizedBox(height: 12),
+          _buildWazeButton(
+            icon: Icons.check_circle_outline_rounded,
+            label: 'Dah Selesai',
+            color: report.isOwnReport(_authService.currentUser?.id, currentDeviceId: _deviceId) ? Colors.grey : AppTheme.primaryBlue,
+            count: report.verifiedResolved,
+            onTap: report.isOwnReport(_authService.currentUser?.id, currentDeviceId: _deviceId)
+                ? () {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Anda tidak boleh mengundi laporan sendiri.')));
+                  }
+                : () {
+                    Navigator.pop(context);
+                    _verifyReport(report, 'resolved');
+                  },
+            isDarkMode: isDarkMode,
+          ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'BATAL',
+              style: TextStyle(color: isDarkMode ? Colors.white54 : Colors.grey),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWazeButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required int count,
+    required VoidCallback onTap,
+    required bool isDarkMode,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: isDarkMode ? Colors.white.withOpacity(0.9) : Colors.black87,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                  color: color,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -987,127 +1926,67 @@ class _HomeScreenState extends State<HomeScreen> {
     return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 
+  void _maximizePhoto(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              alignment: Alignment.topRight,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: InteractiveViewer(
+                    child: Image.network(
+                      imageUrl,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return const Center(child: CircularProgressIndicator());
+                      },
+                      errorBuilder: (context, url, error) => const Icon(Icons.error),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _beepController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 }
 
-class _InlineCommentsSection extends StatefulWidget {
-  final String reportId;
-  final CommunityService communityService;
-  final bool isDarkMode;
-
-  const _InlineCommentsSection({
-    required this.reportId,
-    required this.communityService,
-    required this.isDarkMode,
-  });
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  _TrianglePainter(this.color);
 
   @override
-  State<_InlineCommentsSection> createState() => _InlineCommentsSectionState();
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final path = Path();
+    path.moveTo(0, 0);
+    path.lineTo(size.width, 0);
+    path.lineTo(size.width / 2, size.height);
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class _InlineCommentsSectionState extends State<_InlineCommentsSection> {
-  final TextEditingController _commentController = TextEditingController();
-  List<Map<String, dynamic>> _comments = [];
-  bool _isLoading = true;
-  bool _isExpanded = false;
-  bool _isSending = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadComments();
-  }
-
-  Future<void> _loadComments() async {
-    try {
-      final comments = await widget.communityService.getComments(widget.reportId);
-      if (mounted) {
-        setState(() {
-          _comments = comments;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _sendComment() async {
-    if (_commentController.text.trim().isEmpty) return;
-    setState(() => _isSending = true);
-    try {
-      final success = await widget.communityService.addComment(widget.reportId, _commentController.text.trim());
-      if (success && mounted) {
-        _commentController.clear();
-        await _loadComments();
-      }
-    } catch (e) {
-      debugPrint('Failed to send comment: $e');
-    } finally {
-      if (mounted) setState(() => _isSending = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    _commentController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        GestureDetector(
-          onTap: () => setState(() => _isExpanded = !_isExpanded),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: (widget.isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.comment_outlined, size: 20, color: widget.isDarkMode ? Colors.white70 : Colors.black54),
-                const SizedBox(width: 10),
-                const Text('Komen', style: TextStyle(fontWeight: FontWeight.w600)),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(color: const Color(0xFF1976D2).withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
-                  child: Text('${_comments.length}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1976D2))),
-                ),
-                const Spacer(),
-                Icon(_isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded),
-              ],
-            ),
-          ),
-        ),
-        if (_isExpanded) ...[
-          const SizedBox(height: 12),
-          if (_isLoading) const Center(child: CircularProgressIndicator(strokeWidth: 2))
-          else if (_comments.isEmpty) const Center(child: Text('Belum ada komen', style: TextStyle(fontSize: 12, color: Colors.grey)))
-          else ..._comments.map((c) => ListTile(
-            dense: true,
-            title: Text(c['user_name'] ?? 'Sahabat', style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text(c['content'] ?? ''),
-          )),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Expanded(child: TextField(controller: _commentController, decoration: const InputDecoration(hintText: 'Tambah komen...', isDense: true))),
-                IconButton(icon: const Icon(Icons.send_rounded, color: Color(0xFF1976D2)), onPressed: _sendComment),
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}

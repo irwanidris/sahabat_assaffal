@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "608225078469",
+    "project_id": "sahabat-assaffal",
+    "storage_bucket": "sahabat-assaffal.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:608225078469:android:d5c20ef796393b5ab694ac",
+        "android_client_info": {
+          "package_name": "com.sahabatassaffal.hero"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyANIRVXwz8aEuIwUALjVV7VyqCHNQjM6wo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -50,14 +51,40 @@ class DeviceService {
     if (_userProfile != null) return _userProfile!;
 
     final deviceId = await getDeviceId();
+    final user = _client.auth.currentUser;
 
     try {
-      // Try to fetch existing profile
-      final response = await _client
-          .from('device_users')
-          .select()
-          .eq('device_id', deviceId)
-          .maybeSingle();
+      // Try to fetch existing profile (prioritize user_id if logged in, else device_id)
+      dynamic response;
+      if (user != null) {
+        response = await _client
+            .from('device_users')
+            .select()
+            .eq('user_id', user.id)
+            .maybeSingle();
+            
+        // If not found by user_id, check if there's a profile for this device that doesn't have a user_id yet
+          final deviceProfile = await _client
+              .from('device_users')
+              .select()
+              .eq('device_id', deviceId)
+              .filter('user_id', 'is', null)
+              .maybeSingle();
+              
+          if (deviceProfile != null) {
+            // Link existing device profile to this user
+            response = await _client.from('device_users').update({
+              'user_id': user.id,
+              'updated_at': DateTime.now().toIso8601String(),
+            }).eq('id', deviceProfile['id']).select().single();
+          }
+        }
+        response = await _client
+            .from('device_users')
+            .select()
+            .eq('device_id', deviceId)
+            .filter('user_id', 'is', null)
+            .maybeSingle();
 
       if (response != null) {
         _userProfile = response;
@@ -65,13 +92,24 @@ class DeviceService {
       }
 
       // Create new profile
-      final newProfile = await _client.from('device_users').insert({
+      final Map<String, dynamic> insertData = {
         'device_id': deviceId,
-        'nickname': 'Hero #${DateTime.now().millisecondsSinceEpoch % 10000}',
+        'nickname': 'Sahabat #${DateTime.now().millisecondsSinceEpoch % 10000}',
         'points': 0,
         'total_reports': 0,
         'badges': [],
-      }).select().single();
+      };
+      
+      if (user != null) {
+        insertData['user_id'] = user.id;
+        // Optional: Use Google display name as initial nickname if available
+        final googleName = user.userMetadata?['full_name'];
+        if (googleName != null) {
+          insertData['nickname'] = googleName;
+        }
+      }
+
+      final newProfile = await _client.from('device_users').insert(insertData).select().single();
 
       _userProfile = newProfile;
       return _userProfile!;
@@ -88,12 +126,12 @@ class DeviceService {
 
   // Add points and check for new badges
   Future<List<String>> addPoints(int points, {String? reason}) async {
-    final deviceId = await getDeviceId();
     List<String> newBadges = [];
 
     try {
       // Get current profile
       final profile = await getOrCreateProfile();
+      final id = profile['id']; // Use DB internal ID
       final currentPoints = (profile['points'] as int?) ?? 0;
       final totalReports = (profile['total_reports'] as int?) ?? 0;
       final currentBadges = List<String>.from(profile['badges'] ?? []);
@@ -102,7 +140,7 @@ class DeviceService {
       await _client.from('device_users').update({
         'points': currentPoints + points,
         'updated_at': DateTime.now().toIso8601String(),
-      }).eq('device_id', deviceId);
+      }).eq('id', id);
 
       // Check for new badges based on reports
       final badgesToCheck = {
@@ -125,7 +163,7 @@ class DeviceService {
       if (newBadges.isNotEmpty) {
         await _client.from('device_users').update({
           'badges': currentBadges,
-        }).eq('device_id', deviceId);
+        }).eq('id', id);
       }
 
       // Clear cache to refresh
@@ -172,7 +210,7 @@ class DeviceService {
         'current_streak': newStreak,
         'longest_streak': newLongestStreak,
         'updated_at': DateTime.now().toIso8601String(),
-      }).eq('device_id', deviceId);
+      }).eq('id', profile['id']);
 
       _userProfile = null; // Clear cache
     } catch (e) {
@@ -210,6 +248,65 @@ class DeviceService {
       return (response as List).length + 1;
     } catch (e) {
       return 0;
+    }
+  }
+
+  // Update nickname with tiered restriction
+  Future<String?> updateNickname(String nickname) async {
+    final deviceId = await getDeviceId();
+    final profile = await getOrCreateProfile();
+    
+    // Check if nickname is actually different
+    if (profile['nickname'] == nickname) {
+      return null; // No change needed
+    }
+
+    // Get number of times nickname has been changed
+    final changeCount = (profile['nickname_change_count'] as int?) ?? 0;
+    
+    // Check for tiered restriction
+    final lastChangedStr = profile['nickname_changed_at'];
+    if (lastChangedStr != null) {
+      final lastChanged = DateTime.parse(lastChangedStr);
+      
+      Duration restrictionDuration;
+      if (changeCount == 1) {
+        restrictionDuration = const Duration(hours: 48); // Selepas setup (tukar kali pertama): 48 jam
+      } else if (changeCount == 2) {
+        restrictionDuration = const Duration(days: 30);  // Selepas tukar kali kedua: 30 hari
+      } else {
+        restrictionDuration = const Duration(days: 60);  // Tukar kali ketiga dan seterusnya: 60 hari
+      }
+
+      final nextAllowedDate = lastChanged.add(restrictionDuration);
+      
+      if (DateTime.now().isBefore(nextAllowedDate)) {
+        final difference = nextAllowedDate.difference(DateTime.now());
+        final remainingDays = difference.inDays;
+        final remainingHours = difference.inHours % 24;
+        
+        if (remainingDays > 0) {
+          return 'Anda hanya boleh menukar nickname semula dalam masa $remainingDays hari${remainingHours > 0 ? " $remainingHours jam" : ""} lagi.';
+        } else {
+          final remainingMins = difference.inMinutes % 60;
+          return 'Anda boleh menukar nickname semula dalam masa $remainingHours jam ${remainingMins > 0 ? "$remainingMins minit" : ""} lagi.';
+        }
+      }
+    }
+
+    try {
+      await _client.from('device_users').update({
+        'nickname': nickname,
+        'nickname_changed_at': DateTime.now().toIso8601String(),
+        'nickname_change_count': changeCount + 1,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', profile['id']);
+      
+      _userProfile = null; // Clear cache
+      return null; // Success
+    } catch (e) {
+      debugPrint('Error updating nickname: $e');
+      return 'Ralat sistem: Gagal mengemaskini nickname.';
     }
   }
 

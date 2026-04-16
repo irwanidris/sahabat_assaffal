@@ -52,13 +52,13 @@ class DisclaimerScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               _buildText(
-                'Aplikasi Sahabat Assaffal adalah inisiatif komuniti awam yang bertujuan memudahkan penyaluran maklumat kerosakan infrastruktur kepada pihak berkuasa.',
+                'Aplikasi Sahabat Assaffal adalah inisiatif komuniti awam yang bertujuan memudahkan penyaluran maklumat kerosakan infrastruktur melalui verifikasi komuniti.',
               ),
               _buildText(
-                'Segala laporan yang dibuat akan dimajukan untuk rekod pihak bertanggungjawab. Namun, sebarang hasil usaha atau tindakan pembaikan adalah tertakluk sepenuhnya di bawah bidang kuasa mereka.',
+                'Laporan anda akan disiarkan secara langsung dan boleh disahkan oleh pengguna lain di lokasi kejadian. Aduan yang telah disahkan oleh komuniti akan dipanjangkan untuk rekod pihak urus setia atau agensi bertanggungjawab.',
               ),
               _buildText(
-                'Pihak Sahabat Assaffal tidak bertanggungjawab ke atas sebarang tindakan atau ketiadaan tindakan oleh pihak berkuasa berkaitan.',
+                'Segala hasil usaha atau tindakan pembaikan adalah tertakluk sepenuhnya di bawah bidang kuasa agensi berkaitan. Sahabat Assaffal tidak bertanggungjawab ke atas sebarang tindakan atau ketiadaan tindakan oleh pihak berkuasa.',
               ),
               const SizedBox(height: 20),
               Container(

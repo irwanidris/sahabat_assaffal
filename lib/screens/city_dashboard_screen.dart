@@ -2,10 +2,16 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+// Buang import platform spesifik yang menyebabkan konflik
 import '../services/analytics_service.dart';
 import '../services/device_service.dart';
 import '../services/auth_service.dart';
+import '../services/supabase_service.dart';
 import '../theme/app_theme.dart';
+import 'package:intl/intl.dart';
+import 'news_screen.dart';
+import 'notifications_list_screen.dart';
 
 class CityDashboardScreen extends StatefulWidget {
   const CityDashboardScreen({super.key});
@@ -18,6 +24,7 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   final AnalyticsService _analyticsService = AnalyticsService();
   final DeviceService _deviceService = DeviceService();
   final AuthService _authService = AuthService();
+  final SupabaseService _supabaseService = SupabaseService();
   
   late TabController _tabController;
   StreamSubscription<AuthState>? _authSubscription;
@@ -28,8 +35,10 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   Map<String, dynamic> _personalStats = {};
   List<Map<String, dynamic>> _leaderboard = [];
   List<Map<String, dynamic>> _priorityAreas = [];
+  List<Map<String, dynamic>> _newsList = [];
   
   bool _isLoading = true;
+  bool _isNewsLoading = true;
   String? _deviceId;
 
   @override
@@ -55,29 +64,46 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   }
 
   Future<void> _loadData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     
-    _deviceId = await _deviceService.getDeviceId();
-    
-    final results = await Future.wait([
-      _analyticsService.getCityStats(),
-      _analyticsService.getAreaHeatmapData(),
-      _analyticsService.getMonthlyTrends(),
-      _analyticsService.getPersonalStats(_deviceId!),
-      _analyticsService.getLeaderboard(),
-      _analyticsService.getTopPriorityAreas(),
-    ]);
-    
-    if (mounted) {
-      setState(() {
-        _cityStats = results[0] as Map<String, dynamic>;
-        _areaData = results[1] as List<Map<String, dynamic>>;
-        _monthlyTrends = results[2] as List<Map<String, dynamic>>;
-        _personalStats = results[3] as Map<String, dynamic>;
-        _leaderboard = results[4] as List<Map<String, dynamic>>;
-        _priorityAreas = results[5] as List<Map<String, dynamic>>;
-        _isLoading = false;
-      });
+    try {
+      _deviceId = await _deviceService.getDeviceId();
+      
+      final results = await Future.wait([
+        _analyticsService.getCityStats(),
+        _analyticsService.getAreaHeatmapData(),
+        _analyticsService.getMonthlyTrends(),
+        _analyticsService.getPersonalStats(_deviceId ?? 'unknown'),
+        _analyticsService.getLeaderboard(),
+        _analyticsService.getTopPriorityAreas(),
+        _supabaseService.fetchNews(),
+      ]).timeout(const Duration(seconds: 15));
+      
+      if (mounted) {
+        setState(() {
+          _cityStats = results[0] as Map<String, dynamic>;
+          _areaData = results[1] as List<Map<String, dynamic>>;
+          _monthlyTrends = results[2] as List<Map<String, dynamic>>;
+          _personalStats = results[3] as Map<String, dynamic>;
+          _leaderboard = results[4] as List<Map<String, dynamic>>;
+          _priorityAreas = results[5] as List<Map<String, dynamic>>;
+          _newsList = results[6] as List<Map<String, dynamic>>;
+          _isLoading = false;
+          _isNewsLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading stats: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isNewsLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Gagal memuatkan data terkini.'))
+        );
+      }
     }
   }
 
@@ -206,23 +232,14 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
             ),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      )
-                    ],
-                  ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
                   child: Image.asset(
                     'assets/images/app_icon.png',
-                    width: 24,
-                    height: 24,
+                    width: 32,
+                    height: 32,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.report_problem),
                   ),
                 ),
                 const SizedBox(width: 14),
@@ -238,7 +255,28 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
                           color: isDarkMode ? Colors.white : Colors.black87,
                         ),
                       ),
+                      Text(
+                        'Suara Kita Semua',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          fontStyle: FontStyle.italic,
+                          color: AppTheme.primaryRed,
+                        ),
+                      ),
                     ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const NotificationsListScreen()),
+                    );
+                  },
+                  icon: Icon(
+                    Icons.notifications_none_rounded,
+                    color: isDarkMode ? Colors.white70 : Colors.black54,
                   ),
                 ),
                 IconButton(
@@ -286,34 +324,166 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   }
 
   Widget _buildBeritaTerbaru(bool isDarkMode) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.newspaper_rounded,
-            size: 64,
-            color: isDarkMode ? Colors.white24 : Colors.black12,
+    if (_isNewsLoading) {
+      return const Center(child: CircularProgressIndicator(color: AppTheme.primaryRed));
+    }
+
+    if (_newsList.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.newspaper, size: 64, color: (isDarkMode ? Colors.white24 : Colors.black12)),
+            const SizedBox(height: 16),
+            const Text('Tiada berita buat masa ini.'),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _newsList.length,
+        itemBuilder: (context, index) {
+          final news = _newsList[index];
+          return NewsCard(
+            news: news, 
+            isDarkMode: isDarkMode, 
+            onTap: () => _showNewsDetail(news),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showNewsDetail(Map<String, dynamic> news) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.9,
+        minChildSize: 0.6,
+        maxChildSize: 0.97,
+        builder: (_, scrollController) => Container(
+          decoration: BoxDecoration(
+            color: isDarkMode ? AppTheme.darkBackground : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
           ),
-          const SizedBox(height: 16),
-          Text(
-            'AKAN DATANG',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: isDarkMode ? Colors.white38 : Colors.black38,
-              letterSpacing: 2,
-            ),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: isDarkMode ? Colors.white24 : Colors.black12,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+                  children: [
+                    if (news['image_url'] != null)
+                      Column(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(24),
+                            child: Image.network(
+                              news['image_url'],
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryRed.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          (news['category'] ?? 'Umum').toUpperCase(),
+                          style: const TextStyle(
+                            color: AppTheme.primaryRed,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      news['title'] ?? '',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        height: 1.2,
+                        color: isDarkMode ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: AppTheme.primaryRed.withOpacity(0.1),
+                          child: const Icon(Icons.person, size: 18, color: AppTheme.primaryRed),
+                        ),
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              news['author'] ?? 'Admin',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: isDarkMode ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                            Text(
+                              DateFormat('dd MMMM yyyy, hh:mm a').format(DateTime.parse(news['created_at'])),
+                              style: TextStyle(
+                                color: isDarkMode ? Colors.white38 : Colors.black38,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Divider(),
+                    ),
+                    Text(
+                      news['content'] ?? '',
+                      style: TextStyle(
+                        fontSize: 17,
+                        height: 1.8,
+                        letterSpacing: 0.2,
+                        color: isDarkMode ? Colors.white.withOpacity(0.9) : Colors.black87.withOpacity(0.8),
+                      ),
+                    ),
+                    const SizedBox(height: 60),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Berita terbaru dari Portal Berita Tungku.',
-            style: TextStyle(
-              fontSize: 14,
-              color: isDarkMode ? Colors.white24 : Colors.black26,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -367,7 +537,7 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
                     'Kadar Penyelesaian',
                     '${_cityStats['resolutionRate'] ?? 0}%',
                     Icons.trending_up_rounded,
-                    Colors.teal,
+                    Colors.green,
                     isDarkMode,
                   ),
                 ),
@@ -410,7 +580,7 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildSectionTitle('Kepadatan Lubang mengikut Kawasan', isDarkMode),
+                      _buildSectionTitle('Kepadatan Laporan mengikut Kawasan', isDarkMode),
                       const SizedBox(height: 8),
                       Text(
                         'Kawasan disusun mengikut jumlah laporan',
@@ -458,7 +628,7 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
                     'Selesai',
                     '${_personalStats['resolvedReports'] ?? 0}',
                     Icons.check_circle_outline_rounded,
-                    Colors.green,
+                    AppTheme.primaryBlue,
                     isDarkMode,
                   ),
                 ),
@@ -685,7 +855,7 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
     final pending = area['pending'] as int;
     final resolved = area['resolved'] as int;
     final intensity = maxCount > 0 ? count / maxCount : 0.0;
-    final color = Color.lerp(Colors.green, Colors.red, intensity)!;
+    final color = Color.lerp(Colors.orange, AppTheme.primaryRed, intensity)!;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
