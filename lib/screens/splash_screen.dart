@@ -54,91 +54,60 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              AppTheme.primaryRed,
-              AppTheme.primaryBlue,
-            ],
-          ),
-        ),
-        child: Center(
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              return FadeTransition(
-                opacity: _fadeAnimation,
-                child: ScaleTransition(
-                  scale: _scaleAnimation,
+      backgroundColor: Colors.white,
+      body: Center(
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, child) {
+            return FadeTransition(
+              opacity: _fadeAnimation,
+              child: ScaleTransition(
+                scale: _scaleAnimation,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Logo Section - Disesuaikan untuk logo wide "Selamatkan Sabah"
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 40),
-                        child: Image.asset(
-                          'assets/images/logo_s_assaffal.png',
-                          width: double.infinity,
-                          fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) {
-                            // Fallback jika fail logo_s_assaffal.png belum ada
-                            return Container(
-                              height: 140,
-                              width: 140,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                              child: const Icon(
-                                Icons.image_not_supported_rounded,
-                                size: 70,
-                                color: AppTheme.primaryRed,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 40),
-                      // App Name
                       const Text(
                         'Sahabat Assaffal',
                         style: TextStyle(
-                          fontSize: 32,
+                          fontSize: 28,
                           fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                          color: AppTheme.primaryRed,
                           letterSpacing: 1.5,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Selamatkan Sabah',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.white.withOpacity(0.8),
-                          letterSpacing: 1,
-                        ),
+                      const SizedBox(height: 24),
+                      Image.asset(
+                        'assets/images/sahabat_assaffal.png',
+                        width: double.infinity,
+                        height: 200,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(
+                            Icons.group_rounded,
+                            size: 100,
+                            color: AppTheme.primaryRed,
+                          );
+                        },
                       ),
-                      const SizedBox(height: 60),
-                      // Loading indicator
-                      SizedBox(
-                        width: 40,
-                        height: 40,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white.withOpacity(0.8),
-                          ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Suara Kita Semua',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontStyle: FontStyle.italic,
+                          color: AppTheme.primaryRed,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 1.2,
                         ),
                       ),
                     ],
                   ),
                 ),
-              );
-            },
-          ),
+              ),
+            );
+          },
         ),
       ),
     );

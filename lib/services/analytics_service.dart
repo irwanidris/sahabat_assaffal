@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/pothole_report.dart';
+import '../models/assaffal_report.dart';
 
 class AnalyticsService {
   static final AnalyticsService _instance = AnalyticsService._internal();

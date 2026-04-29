@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../models/pothole_report.dart';
+import '../models/assaffal_report.dart';
 import '../theme/app_theme.dart';
 import 'edit_report_screen.dart';
 
 class ResolvedReportsScreen extends StatelessWidget {
-  final List<PotholeReport> reports;
+  final List<AssaffalReport> reports;
   final bool isAdmin;
   final bool isYB;
 
@@ -39,7 +39,7 @@ class ResolvedReportsScreen extends StatelessWidget {
                 final String? resolvedImageUrl = report.resolvedImageUrl;
 
                 return Card(
-                  color: Colors.red.shade900.withOpacity(0.8),
+                  color: Colors.green.withOpacity(0.8),
                   elevation: 2,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   child: InkWell(
@@ -77,10 +77,10 @@ class ResolvedReportsScreen extends StatelessWidget {
                                 child: Container(
                                   padding: const EdgeInsets.all(2),
                                   decoration: const BoxDecoration(
-                                    color: Colors.green,
+                                    color: Colors.white,
                                     shape: BoxShape.circle,
                                   ),
-                                  child: const Icon(Icons.check, size: 10, color: Colors.white),
+                                  child: const Icon(Icons.check, size: 10, color: Colors.green),
                                 ),
                               ),
                           ],
@@ -130,7 +130,7 @@ class ResolvedReportsScreen extends StatelessWidget {
     );
   }
 
-  void _showComparisonDialog(BuildContext context, PotholeReport report) {
+  void _showComparisonDialog(BuildContext context, AssaffalReport report) {
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -164,7 +164,7 @@ class ResolvedReportsScreen extends StatelessWidget {
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Tutup'),
+              child: const Text('Tutup', style: TextStyle(color: AppTheme.primaryRed, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 8),
           ],
@@ -179,7 +179,7 @@ class ResolvedReportsScreen extends StatelessWidget {
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-          color: label == 'SELEPAS' ? Colors.green.shade700 : Colors.red.shade700,
+          color: label == 'SELEPAS' ? Colors.green : AppTheme.primaryRed,
           child: Text(
             label,
             textAlign: TextAlign.center,

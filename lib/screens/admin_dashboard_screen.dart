@@ -1,13 +1,10 @@
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../cubit/reports_cubit.dart';
-import '../models/pothole_report.dart';
+import '../models/assaffal_report.dart';
 import '../services/supabase_service.dart';
 import '../theme/app_theme.dart';
 
@@ -21,7 +18,6 @@ class AdminDashboardScreen extends StatefulWidget {
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final SupabaseService _supabaseService = SupabaseService();
   bool _isProcessing = false;
-  final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
@@ -80,93 +76,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Future<void> _updateStatus(PotholeReport report, String newStatus) async {
-    if (_isProcessing) return;
-    
-    // Dapatkan ID & Nama Moderator semasa (cth: dari AuthService)
-    final currentUser = Supabase.instance.client.auth.currentUser;
-    final currentUserId = currentUser?.id;
-    final currentUserName = currentUser?.userMetadata?['full_name'] ?? 'Moderator';
-
-    // Logik Sekatan: Jika klik Selesai, pastikan dia yang memproses
-    if (newStatus == 'resolved' && report.status == 'processing') {
-      if (report.assignedTo != null && report.assignedTo != currentUserId) {
-        _showSnackBar('Aduan ini sedang diuruskan oleh ${report.assignedName ?? 'moderator lain'}.', isError: true);
-        return;
-      }
-    }
-
-    String? resolvedImageUrl;
-
-    if (newStatus == 'resolved') {
-      final source = await showModalBottomSheet<ImageSource>(
-        context: context,
-        builder: (context) => SafeArea(
-          child: Wrap(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt),
-                title: const Text('Ambil Gambar Baru (Selesai)'),
-                onTap: () => Navigator.pop(context, ImageSource.camera),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library),
-                title: const Text('Pilih dari Galeri'),
-                onTap: () => Navigator.pop(context, ImageSource.gallery),
-              ),
-            ],
-          ),
-        ),
-      );
-
-      if (source == null) return;
-
-      final XFile? pickedFile = await _picker.pickImage(
-        source: source,
-        imageQuality: 70,
-        maxWidth: 1080,
-      );
-
-      if (pickedFile == null) return;
-
-      setState(() => _isProcessing = true);
-      try {
-        resolvedImageUrl = await _supabaseService.uploadImage(File(pickedFile.path));
-      } catch (e) {
-        if (mounted) _showSnackBar('Gagal muat naik gambar: $e', isError: true);
-        setState(() => _isProcessing = false);
-        return;
-      }
-    } else {
-      setState(() => _isProcessing = true);
-    }
-
-    try {
-      await _supabaseService.updateReportStatus(
-        report.id, 
-        newStatus, 
-        resolvedImageUrl: resolvedImageUrl,
-        assignedTo: newStatus == 'processing' ? currentUserId : (newStatus == 'resolved' ? report.assignedTo : null),
-        assignedName: newStatus == 'processing' ? currentUserName : (newStatus == 'resolved' ? report.assignedName : null),
-      );
-
-      if (mounted) {
-        await context.read<ReportsCubit>().refreshReports();
-        String label = 'STATUS';
-        if (newStatus == 'resolved') label = 'SELESAI';
-        if (newStatus == 'processing') label = 'PROSES';
-        if (newStatus == 'pending') label = 'BARU';
-        
-        _showSnackBar('Status berjaya ditukar kepada $label');
-      }
-    } catch (e) {
-      if (mounted) _showSnackBar('Gagal menukar status: $e', isError: true);
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
-    }
-  }
-
-  Future<void> _deleteReport(PotholeReport report) async {
+  Future<void> _deleteReport(AssaffalReport report) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -206,9 +116,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Scaffold(
       backgroundColor: isDarkMode ? AppTheme.darkBackground : AppTheme.lightBackground,
       appBar: AppBar(
-        title: const Text('Dashboard Admin', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Sahabat Assaffal', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: AppTheme.primaryRed,
         foregroundColor: Colors.white,
+        centerTitle: true,
         actions: [
           if (_isProcessing)
             const Padding(
@@ -234,15 +145,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               itemBuilder: (context, index) {
                 final report = reports[index];
                 final isResolved = report.status == 'resolved';
-                final isProcessingStatus = report.status == 'processing';
-                final isPending = report.status == 'pending';
-
-                final currentUser = Supabase.instance.client.auth.currentUser;
-                final currentUserId = currentUser?.id;
-                
-                // Cek adakah saya yang sedang memproses?
-                final isMyTask = report.assignedTo == currentUserId;
-                final isAssignedToOther = isProcessingStatus && report.assignedTo != null && !isMyTask;
 
                 return Card(
                   elevation: 2,
@@ -277,9 +179,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const SizedBox(height: 2),
-                            Text(report.category, style: TextStyle(color: AppTheme.primaryBlue, fontWeight: FontWeight.w600, fontSize: 11)),
+                            Text(report.category, style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600, fontSize: 11)),
                             const SizedBox(height: 6),
-                            // INFO TAMBAHAN: PELAPOR & GPS
                             Row(
                               children: [
                                 const Icon(Icons.person, size: 12, color: Colors.grey),
@@ -304,78 +205,69 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                               ],
                             ),
                             const SizedBox(height: 8),
+                            // Community Stats for Admin
+                            Row(
+                              children: [
+                                _buildMiniStat(Icons.check_circle_outline, Colors.green, report.verifiedResolved),
+                                const SizedBox(width: 8),
+                                _buildMiniStat(Icons.error_outline, AppTheme.primaryRed, report.verifiedStillExists),
+                                const SizedBox(width: 8),
+                                _buildMiniStat(Icons.block_flipped, Colors.orange, report.verifiedFake),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            if (report.resolvedImageUrl != null) ...[
+                              const Text('BUKTI SELESAI:', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.green)),
+                              const SizedBox(height: 4),
+                              GestureDetector(
+                                onTap: () => _maximizePhoto(report.resolvedImageUrl!),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: CachedNetworkImage(
+                                    imageUrl: report.resolvedImageUrl!,
+                                    width: 100,
+                                    height: 60,
+                                    fit: BoxFit.cover,
+                                    placeholder: (context, url) => Container(color: Colors.grey[200]),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
                                 color: isResolved 
                                     ? Colors.green.withOpacity(0.1) 
-                                    : (isProcessingStatus ? Colors.blue.withOpacity(0.1) : Colors.orange.withOpacity(0.1)),
+                                    : (report.status == 'fake' 
+                                        ? Colors.red.withOpacity(0.1) 
+                                        : (report.upvoteCount > 0 
+                                            ? AppTheme.primaryRed.withOpacity(0.1) 
+                                            : Colors.orange.withOpacity(0.1))),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                isResolved ? 'SELESAI' : (isProcessingStatus ? 'PROSES' : 'BARU'),
+                                isResolved 
+                                    ? 'SELESAI' 
+                                    : (report.status == 'fake' 
+                                        ? 'PALSU' 
+                                        : (report.upvoteCount > 0 ? 'AKTIF' : 'PENDING')),
                                 style: TextStyle(
-                                  color: isResolved ? Colors.green : (isProcessingStatus ? Colors.blue : Colors.orange), 
+                                  color: isResolved 
+                                      ? Colors.green 
+                                      : (report.status == 'fake' 
+                                          ? Colors.red 
+                                          : (report.upvoteCount > 0 ? AppTheme.primaryRed : Colors.orange)),
                                   fontSize: 9, 
                                   fontWeight: FontWeight.bold
                                 ),
                               ),
                             ),
-                            if (isProcessingStatus && report.assignedName != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  isMyTask ? 'Ditangani oleh Anda' : 'Oleh: ${report.assignedName}',
-                                  style: TextStyle(
-                                    fontSize: 9, 
-                                    color: isMyTask ? Colors.blue : Colors.red,
-                                    fontStyle: FontStyle.italic,
-                                    fontWeight: isMyTask ? FontWeight.bold : FontWeight.normal,
-                                  ),
-                                ),
-                              ),
                           ],
                         ),
                         trailing: IconButton(
                           icon: const Icon(Icons.delete_outline, color: Colors.red),
                           onPressed: _isProcessing ? null : () => _deleteReport(report),
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            const Text('Status:', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                            const SizedBox(width: 8),
-                            TextButton(
-                              onPressed: (isPending && !isAssignedToOther) && !_isProcessing 
-                                  ? () => _updateStatus(report, 'processing') 
-                                  : null,
-                              style: TextButton.styleFrom(
-                                backgroundColor: isProcessingStatus ? Colors.blue.withOpacity(0.1) : null,
-                                foregroundColor: isAssignedToOther ? Colors.grey : Colors.blue,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                                minimumSize: const Size(0, 32),
-                              ),
-                              child: Text(isAssignedToOther ? 'DIURUSKAN' : 'PROSES', style: const TextStyle(fontSize: 11)),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: (isProcessingStatus && isMyTask) && !_isProcessing 
-                                  ? () => _updateStatus(report, 'resolved') 
-                                  : null,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: isResolved ? Colors.green.withOpacity(0.1) : (isAssignedToOther ? Colors.grey[300] : Colors.green),
-                                foregroundColor: isResolved ? Colors.green : (isAssignedToOther ? Colors.grey : Colors.white),
-                                elevation: 0,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                                minimumSize: const Size(0, 32),
-                              ),
-                              child: const Text('SELESAI', style: TextStyle(fontSize: 11)),
-                            ),
-                          ],
                         ),
                       ),
                     ],
@@ -387,6 +279,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           return const SizedBox();
         },
       ),
+    );
+  }
+
+  Widget _buildMiniStat(IconData icon, Color color, int count) {
+    return Row(
+      children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 2),
+        Text('$count', style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.bold)),
+      ],
     );
   }
 }

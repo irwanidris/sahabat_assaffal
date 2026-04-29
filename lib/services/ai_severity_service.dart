@@ -177,10 +177,10 @@ class AISeverityService {
 
   static Color getSeverityColor(String severity) {
     switch (severity.toLowerCase()) {
-      case 'critical': return const Color(0xFFE53935);
-      case 'high': return const Color(0xFFFF9800);
-      case 'medium': return const Color(0xFFFFC107);
-      default: return const Color(0xFF4CAF50);
+      case 'critical': return const Color(0xFFE53935); // Merah
+      case 'high': return const Color(0xFFFF5722);     // Merah-Jingga
+      case 'medium': return const Color(0xFFFF9800);   // Jingga
+      default: return const Color(0xFF4CAF50);         // Hijau
     }
   }
 

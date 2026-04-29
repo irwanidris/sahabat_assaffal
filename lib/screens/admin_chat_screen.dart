@@ -196,6 +196,9 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
         'image_url': imageUrl,
       });
 
+      // Muat semula mesej serta-merta untuk kelancaran UI
+      _loadMessages();
+
       // Hantar notifikasi kepada Admin/Moderator lain
       await _supabaseService.sendChatNotification(
         senderName: user.userMetadata?['full_name'] ?? 'Seseorang',
@@ -215,33 +218,44 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Padam Mesej?'),
-        content: const Text('Mesej ini akan dipadam dan digantikan dengan nota bukti pemadaman.'),
+        title: const Text('Padam ?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Tidak')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Padam', style: TextStyle(color: Colors.red)),
+            child: const Text('Ya', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
 
     if (confirm == true) {
-      await _deleteMessage(msg['id']);
+      await _deleteMessage(msg);
     }
   }
 
-  Future<void> _deleteMessage(dynamic id) async {
+  Future<void> _deleteMessage(Map<String, dynamic> msg) async {
     try {
+      final currentUser = _authService.currentUser;
+      final bool isSuperAdmin = currentUser?.userMetadata?['is_admin'] == true;
+      final bool isMe = msg['user_id'] == currentUser?.id;
+
+      String deleteNote;
+      if (isSuperAdmin && !isMe) {
+        deleteNote = 'Admin telah memadam mesej.';
+      } else {
+        final String nickname = msg['sender_name'] ?? 'Sahabat';
+        deleteNote = '$nickname telah memadam mesej.';
+      }
+
       await Supabase.instance.client
           .from('admin_chats')
           .update({
-            'message': 'Mesej ini telah dipadam',
+            'message': deleteNote,
             'image_url': null,
             'is_deleted': true,
           })
-          .eq('id', id);
+          .eq('id', msg['id']);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -266,7 +280,7 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
     final currentUser = _authService.currentUser;
 
     return Scaffold(
-      backgroundColor: isDarkMode ? AppTheme.darkBackground : AppTheme.lightBackground,
+      backgroundColor: isDarkMode ? AppTheme.darkBackground : const Color(0xFFFFF9C4), // Kuning lembut (Lemon Chiffon/Light Yellow)
       body: SafeArea(
         child: Column(
           children: [
@@ -286,7 +300,27 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
                                 itemBuilder: (context, index) {
                                   final msg = _messages[index];
                                   final bool isMe = msg['user_id'] == currentUser?.id;
-                                  return _buildChatBubble(msg, isMe, isDarkMode);
+                                  
+                                  // Logik Paparan Tarikh
+                                  bool showDateHeader = false;
+                                  if (index == _messages.length - 1) {
+                                    showDateHeader = true;
+                                  } else {
+                                    final DateTime currentDate = DateTime.parse(msg['created_at']).toLocal();
+                                    final DateTime nextDate = DateTime.parse(_messages[index + 1]['created_at']).toLocal();
+                                    if (currentDate.day != nextDate.day || 
+                                        currentDate.month != nextDate.month || 
+                                        currentDate.year != nextDate.year) {
+                                      showDateHeader = true;
+                                    }
+                                  }
+
+                                  return Column(
+                                    children: [
+                                      if (showDateHeader) _buildDateHeader(msg['created_at'], isDarkMode),
+                                      _buildChatBubble(msg, isMe, isDarkMode),
+                                    ],
+                                  );
                                 },
                               ),
                         if (_typingUsers.isNotEmpty)
@@ -332,6 +366,46 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
     );
   }
 
+  String _getFormattedDate(String dateStr) {
+    try {
+      final date = DateTime.parse(dateStr).toUtc().add(const Duration(hours: 8));
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final yesterday = today.subtract(const Duration(days: 1));
+      final msgDate = DateTime(date.year, date.month, date.day);
+
+      if (msgDate == today) {
+        return 'HARI INI';
+      } else if (msgDate == yesterday) {
+        return 'SEMALAM';
+      } else {
+        return DateFormat('dd MMMM yyyy').format(date).toUpperCase();
+      }
+    } catch (e) {
+      return '';
+    }
+  }
+
+  Widget _buildDateHeader(String dateStr, bool isDarkMode) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: isDarkMode ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        _getFormattedDate(dateStr),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.8,
+          color: isDarkMode ? Colors.white54 : Colors.black54,
+        ),
+      ),
+    );
+  }
+
   Widget _buildGlassHeader(bool isDarkMode) {
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -361,18 +435,44 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
                       )
                     ],
                   ),
-                  child: Image.asset(
-                    'assets/images/app_icon.png',
-                    width: 24,
-                    height: 24,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.asset(
+                      'assets/images/app_icon.png',
+                      width: 32,
+                      height: 32,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(Icons.report_problem),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 14),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Bilik Sembang', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDarkMode ? Colors.white : Colors.black87)),
-                  ],
+                Expanded(
+                  child: Row(
+                    children: [
+                      Text(
+                        'ChatRoom',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: isDarkMode ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'For Admin & Moderator Only',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -405,9 +505,11 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
           constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: isMe 
-                ? AppTheme.primaryRed 
-                : (isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white),
+            color: isDeleted 
+                ? (isDarkMode ? Colors.grey.withOpacity(0.1) : Colors.grey.shade200)
+                : (isMe 
+                    ? AppTheme.primaryRed 
+                    : (isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white)),
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
               topRight: const Radius.circular(16),
@@ -426,12 +528,12 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
             ? Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.remove_circle_outline, size: 14, color: isMe ? Colors.white70 : Colors.grey),
+                  Icon(Icons.remove_circle_outline, size: 14, color: isDarkMode ? Colors.white54 : Colors.grey),
                   const SizedBox(width: 6),
                   Text(
-                    'Mesej ini telah dipadam',
+                    msg['message'] ?? 'Mesej telah dipadam',
                     style: TextStyle(
-                      color: isMe ? Colors.white70 : Colors.grey,
+                      color: isDarkMode ? Colors.white54 : Colors.grey,
                       fontSize: 12,
                       fontStyle: FontStyle.italic,
                     ),
@@ -512,9 +614,9 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
 
   Widget _buildMessageInput(bool isDarkMode) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: isDarkMode ? AppTheme.darkSurface : Colors.white,
+        color: isDarkMode ? AppTheme.darkSurface : const Color(0xFFFFF9C4),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),

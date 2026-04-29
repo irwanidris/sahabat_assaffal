@@ -1,5 +1,5 @@
 import 'package:share_plus/share_plus.dart';
-import '../models/pothole_report.dart';
+import '../models/assaffal_report.dart';
 
 class ShareService {
   static final ShareService _instance = ShareService._internal();
@@ -7,14 +7,14 @@ class ShareService {
   ShareService._internal();
 
   // Generate shareable link for a report
-  String generateShareLink(PotholeReport report) {
-    // This creates a deep link - you can later set up dynamic links
-    // For now, we'll use a simple format that shows report details
-    return 'https://sahabatassaffal.app/report/${report.id}';
+  String generateShareLink(AssaffalReport report) {
+    // Andaian pautan Google Play Store dengan parameter report_id
+    // Apabila pengguna klik, ia buka Play Store. Selepas install, app boleh baca 'report_id' ini.
+    return 'https://play.google.com/store/apps/details?id=com.sahabatassaffal.hero&referrer=report_id=${report.id}';
   }
 
   // Share report via system share sheet
-  Future<void> shareReport(PotholeReport report) async {
+  Future<void> shareReport(AssaffalReport report) async {
     final link = generateShareLink(report);
     final address = report.address ?? 'Unknown location';
     final areaName = report.areaName ?? 'Unknown area';
@@ -41,7 +41,7 @@ Muat turun Sahabat Assaffal dan lapor kerosakan jalan di kawasan anda! 🦸‍�
   }
 
   // Share report with image
-  Future<void> shareReportWithImage(PotholeReport report) async {
+  Future<void> shareReportWithImage(AssaffalReport report) async {
     final address = report.address ?? 'Unknown location';
     final areaName = report.areaName ?? 'Unknown area';
     final status = report.status.toUpperCase();
@@ -67,7 +67,7 @@ $link
   }
 
   // Quick share (just the link)
-  Future<void> quickShare(PotholeReport report) async {
+  Future<void> quickShare(AssaffalReport report) async {
     final link = generateShareLink(report);
     final areaName = report.areaName ?? 'Laporan Lubang';
     

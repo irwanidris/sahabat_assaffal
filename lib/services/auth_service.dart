@@ -40,6 +40,15 @@ class AuthService {
       // Kemaskini OneSignal Tags selepas login
       final user = _supabase.auth.currentUser;
       if (user != null) {
+        // Simpan Google Avatar URL secara eksplisit untuk fungsi restore nanti
+        if (googleUser.photoUrl != null) {
+          await _supabase.auth.updateUser(
+            UserAttributes(
+              data: {'google_avatar_url': googleUser.photoUrl},
+            ),
+          );
+        }
+
         final bool isAdmin = user.userMetadata?['is_admin'] == true;
         final bool isModerator = user.userMetadata?['is_moderator'] == true;
         final bool isYB = user.userMetadata?['is_yb'] == true;
@@ -49,6 +58,8 @@ class AuthService {
         } else {
           OneSignal.User.removeTag("role");
         }
+        // Sentiasa set user_id tag untuk mengelakkan notifikasi diri sendiri
+        OneSignal.User.addTagWithKey("user_id", user.id);
       }
     } catch (e) {
       debugPrint('Error Google Sign In: $e');

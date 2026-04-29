@@ -119,7 +119,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
               ),
               const SizedBox(height: 32),
               Text(
-                'Akses Admin',
+                'Akses Sahabat Assaffal',
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,

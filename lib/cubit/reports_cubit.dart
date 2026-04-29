@@ -1,6 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
-import '../models/pothole_report.dart';
+import '../models/assaffal_report.dart';
 import '../services/supabase_service.dart';
 
 // States
@@ -16,7 +16,7 @@ class ReportsInitial extends ReportsState {}
 class ReportsLoading extends ReportsState {}
 
 class ReportsLoaded extends ReportsState {
-  final List<PotholeReport> reports;
+  final List<AssaffalReport> reports;
   final int totalCount;
   final DateTime lastUpdated; // Added to force state change detection
 
@@ -45,22 +45,32 @@ class ReportsCubit extends Cubit<ReportsState> {
 
   ReportsCubit(this._supabaseService) : super(ReportsInitial());
 
-  Future<void> loadReports() async {
+  Future<void> loadReports({bool shuffle = false}) async {
     emit(ReportsLoading());
     try {
-      final reports = await _supabaseService.fetchReports();
+      var reports = await _supabaseService.fetchReports();
       final count = await _supabaseService.getReportCount();
+      
+      if (shuffle) {
+        reports.shuffle();
+      }
+      
       emit(ReportsLoaded(reports: reports, totalCount: count));
     } catch (e) {
       emit(ReportsError(e.toString()));
     }
   }
 
-  Future<void> refreshReports() async {
+  Future<void> refreshReports({bool shuffle = false}) async {
     // Don't show loading state for refresh to keep current list visible
     try {
-      final reports = await _supabaseService.fetchReports();
+      var reports = await _supabaseService.fetchReports();
       final count = await _supabaseService.getReportCount();
+      
+      if (shuffle) {
+        reports.shuffle();
+      }
+
       emit(ReportsLoaded(
         reports: reports,
         totalCount: count,
