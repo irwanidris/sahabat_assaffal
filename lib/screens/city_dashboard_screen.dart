@@ -40,12 +40,16 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   bool _isLoading = true;
   bool _isNewsLoading = true;
   String? _deviceId;
+  
+  Timer? _countdownTimer;
+  String _timeLeft = "";
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _loadData();
+    _startCountdown();
     
     // Dengar perubahan status login
     _authSubscription = _authService.authStateChanges.listen((data) {
@@ -59,8 +63,38 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
   @override
   void dispose() {
     _authSubscription?.cancel();
+    _countdownTimer?.cancel();
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _startCountdown() {
+    _updateTimeLeft();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        _updateTimeLeft();
+      }
+    });
+  }
+
+  void _updateTimeLeft() {
+    final now = DateTime.now();
+    // Tarikh akhir bulan ini jam 11:59:59 malam
+    final lastDay = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+    final difference = lastDay.difference(now);
+
+    if (difference.isNegative) {
+      setState(() => _timeLeft = "Tamat");
+    } else {
+      final days = difference.inDays;
+      final hours = difference.inHours % 24;
+      final minutes = difference.inMinutes % 60;
+      final seconds = difference.inSeconds % 60;
+      
+      setState(() {
+        _timeLeft = "${days}d ${hours}h ${minutes}m ${seconds}s";
+      });
+    }
   }
 
   Future<void> _loadData() async {
@@ -114,13 +148,16 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
     
     return Scaffold(
       backgroundColor: isDarkMode ? const Color(0xFF0a0a1a) : const Color(0xFFF5F5F5),
-      body: SafeArea(
+      body: Container(
+        padding: EdgeInsets.only(
+          top: MediaQuery.of(context).padding.top + 110,
+          bottom: 100,
+        ),
         child: Stack(
           children: [
             // KANDUNGAN ASAL
             Column(
               children: [
-                _buildHeader(isDarkMode),
                 _buildTabBar(isDarkMode),
                 Expanded(
                   child: _isLoading
@@ -130,7 +167,7 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
                           children: [
                             _buildBeritaTerbaru(isDarkMode),
                             _buildCityOverview(isDarkMode),
-                            _buildAreaAnalytics(isDarkMode),
+                            _buildRankingTab(isDarkMode),
                           ],
                         ),
                 ),
@@ -214,89 +251,9 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
     );
   }
 
-  Widget _buildHeader(bool isDarkMode) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
-              ),
-            ),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: Image.asset(
-                    'assets/images/app_icon.png',
-                    width: 32,
-                    height: 32,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(Icons.report_problem),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Statistik',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: isDarkMode ? Colors.white : Colors.black87,
-                        ),
-                      ),
-                      Text(
-                        'Suara Kita Semua',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          fontStyle: FontStyle.italic,
-                          color: AppTheme.primaryRed,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const NotificationsListScreen()),
-                    );
-                  },
-                  icon: Icon(
-                    Icons.notifications_none_rounded,
-                    color: isDarkMode ? Colors.white70 : Colors.black54,
-                  ),
-                ),
-                IconButton(
-                  onPressed: _loadData,
-                  icon: Icon(
-                    Icons.refresh_rounded,
-                    color: isDarkMode ? Colors.white70 : Colors.black54,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildTabBar(bool isDarkMode) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       decoration: BoxDecoration(
         color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
         borderRadius: BorderRadius.circular(16),
@@ -317,7 +274,7 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
         tabs: const [
           Tab(text: 'Berita'),
           Tab(text: 'Ringkasan'),
-          Tab(text: 'Kawasan'),
+          Tab(text: 'Ranking'),
         ],
       ),
     );
@@ -554,12 +511,237 @@ class _CityDashboardScreenState extends State<CityDashboardScreen> with SingleTi
             const SizedBox(height: 24),
             _buildSectionTitle('Penyumbang Teratas', isDarkMode),
             const SizedBox(height: 12),
-            ..._leaderboard.take(3).toList().asMap().entries.map((entry) => 
+            ..._leaderboard.take(3).toList().asMap().entries.map((entry) =>
               _buildLeaderboardItem(entry.key + 1, entry.value, isDarkMode)),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildRankingTab(bool isDarkMode) {
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          // Countdown Timer Card
+          _buildCountdownCard(isDarkMode),
+          
+          const SizedBox(height: 16),
+          
+          // Iklan Hadiah Bulanan
+          _buildPrizeAdvertisement(isDarkMode),
+          
+          const SizedBox(height: 24),
+          _buildSectionTitle('Penyumbang Teratas', isDarkMode),
+          const SizedBox(height: 12),
+          
+          if (_leaderboard.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Text(
+                  'Tiada data ranking tersedia',
+                  style: TextStyle(color: isDarkMode ? Colors.white38 : Colors.black38),
+                ),
+              ),
+            )
+          else
+            ..._leaderboard.asMap().entries.map((entry) => 
+              _buildLeaderboardItem(entry.key + 1, entry.value, isDarkMode)),
+              
+          const SizedBox(height: 40),
+          
+          // Original Area Data (Optional, but keeping it below for context)
+          _buildSectionTitle('Kepadatan Laporan mengikut Kawasan', isDarkMode),
+          const SizedBox(height: 12),
+          ..._areaData.map((area) {
+            final maxCount = _areaData.isNotEmpty ? _areaData[0]['count'] as int : 1;
+            return _buildAreaHeatmapItem(area, maxCount, isDarkMode);
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrizeAdvertisement(bool isDarkMode) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Stack(
+          children: [
+            // Placeholder atau Iklan Sebenar
+            AspectRatio(
+              aspectRatio: 2 / 1, // Saiz yang disyorkan: 1200x600 px
+              child: Image.asset(
+                'assets/images/prize_banner.png', // Sediakan fail ini nanti
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [AppTheme.primaryBlue, AppTheme.primaryRed.withOpacity(0.8)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.card_giftcard_rounded, color: Colors.white, size: 40),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'HADIAH BULANAN',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                            letterSpacing: 1.5,
+                          ),
+                        ),
+                        Text(
+                          'Sediakan Grafik 1200 x 600 px',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            // Overlay Teks (Optional jika tiada dalam grafik)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [Colors.black.withOpacity(0.7), Colors.transparent],
+                  ),
+                ),
+                child: const Text(
+                  'Hadiah Menarik Untuk 3 Pemenang Teratas!',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCountdownCard(bool isDarkMode) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isDarkMode 
+            ? [const Color(0xFF1a1a2e), const Color(0xFF16213e)]
+            : [Colors.white, const Color(0xFFF0F0F0)],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppTheme.primaryRed.withOpacity(0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.timer_outlined, color: AppTheme.primaryRed, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'Masa Berbaki Bulan Ini',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: isDarkMode ? Colors.white70 : Colors.black54,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _timeLeft.isEmpty 
+            ? const CircularProgressIndicator()
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: _timeLeft.split(' ').map((part) {
+                  final value = part.substring(0, part.length - 1);
+                  final unit = part.substring(part.length - 1).toUpperCase();
+                  
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryRed.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          value,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.primaryRed,
+                          ),
+                        ),
+                        Text(
+                          _getUnitFull(unit),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isDarkMode ? Colors.white38 : Colors.black38,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+        ],
+      ),
+    );
+  }
+
+  String _getUnitFull(String unit) {
+    switch (unit) {
+      case 'D': return 'HARI';
+      case 'H': return 'JAM';
+      case 'M': return 'MINIT';
+      case 'S': return 'SAAT';
+      default: return '';
+    }
   }
 
   Widget _buildAreaAnalytics(bool isDarkMode) {

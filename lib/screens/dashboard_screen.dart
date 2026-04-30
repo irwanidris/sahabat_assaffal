@@ -339,8 +339,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Widget _buildGridCard(AssaffalReport report, bool isDarkMode) {
     final bool isResolved = report.status == 'resolved';
     final bool isActive = report.upvoteCount > 0;
-    
-    final Color bgColor = isResolved 
+
+    final Color bgColor = isResolved
         ? (isDarkMode ? AppTheme.primaryBlue.withOpacity(0.1) : Colors.blue.shade50)
         : (isDarkMode ? Colors.white.withOpacity(0.05) : Colors.grey.shade100);
 
@@ -400,7 +400,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     final bool isResolved = report.status == 'resolved';
     final bool isActive = report.upvoteCount > 0;
 
-    final Color bgColor = isResolved 
+    final Color bgColor = isResolved
         ? (isDarkMode ? AppTheme.primaryBlue.withOpacity(0.1) : Colors.blue.shade50)
         : (isDarkMode ? Colors.white.withOpacity(0.05) : Colors.grey.shade100);
 
@@ -612,8 +612,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                             ),
                           ),
                         // Lencana "Selesai" (5 undian & < 72 jam)
-                        if (report.status == 'resolved' && 
-                            report.verifiedResolved >= 5 && 
+                        if (report.status == 'resolved' &&
+                            report.verifiedResolved >= 5 &&
                             DateTime.now().difference(report.createdAt).inHours < 72)
                           Positioned(
                             top: 10,
@@ -702,8 +702,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Text(
-                            report.status == 'resolved' 
-                                ? 'SELESAI' 
+                            report.status == 'resolved'
+                                ? 'SELESAI'
                                 : (report.upvoteCount > 0 ? 'AKTIF' : 'BELUM DISAHKAN'),
                             style: TextStyle(
                               fontSize: 12,
@@ -777,133 +777,34 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ],
                     ),
-                    const SizedBox(height: 20),
-                    
-                    // BAHAGIAN UNDIAN (VOTING) & SHARE
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              GestureDetector(
-                                onTap: () async {
-                                  final user = _authService.currentUser;
-                                  if (user == null) {
-                                    _showAuthRequiredDialog();
-                                    return;
-                                  }
-                                  
-                                  // Sekat jika aduan sendiri
-                                  if (report.isOwnReport(user.id, currentDeviceId: _deviceId)) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Anda tidak boleh menyokong laporan anda sendiri.')),
-                                    );
-                                    return;
-                                  }
-
-                                  try {
-                                    final isNowUpvoted = await _supabaseService.toggleUpvote(report.id, user.id);
-                                    setModalState(() {
-                                      hasUpvoted = isNowUpvoted;
-                                      upvoteCount += isNowUpvoted ? 1 : -1;
-                                    });
-                                    setState(() {
-                                      _upvoteStatus[report.id] = isNowUpvoted;
-                                    });
-                                    if (mounted) {
-                                      context.read<ReportsCubit>().loadReports();
-                                    }
-                                  } catch (e) {
-                                    debugPrint('Upvote failed: $e');
-                                  }
-                                },
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 200),
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    gradient: hasUpvoted
-                                        ? const LinearGradient(
-                                            colors: [AppTheme.primaryRed, AppTheme.primaryBlue],
-                                          )
-                                        : null,
-                                    color: hasUpvoted ? null : (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        hasUpvoted ? Icons.thumb_up : Icons.thumb_up_outlined,
-                                        size: 20,
-                                        color: hasUpvoted ? Colors.white : (isDarkMode ? Colors.white70 : Colors.black54),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        '$upvoteCount',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: hasUpvoted ? Colors.white : (isDarkMode ? Colors.white70 : Colors.black54),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              // BUTANG SHARE
-                              Expanded(
-                                child: InkWell(
-                                  onTap: () => _shareService.shareReport(report),
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
-                                    decoration: BoxDecoration(
-                                      color: AppTheme.primaryBlue,
-                                      borderRadius: BorderRadius.circular(12),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: AppTheme.primaryBlue.withOpacity(0.2),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 4),
-                                        ),
-                                      ],
-                                    ),
-                                    child: const Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Icon(Icons.share_rounded, color: Colors.white, size: 18),
-                                        SizedBox(width: 8),
-                                        Text(
-                                          'KONGSI ADUAN',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
+                    const SizedBox(height: 8),
+                    // DILAPORKAN OLEH
+                    Row(
+                      children: [
+                        Text(
+                          'Dilaporkan Oleh : ',
+                          style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                        ),
+                        CircleAvatar(
+                          radius: 10,
+                          backgroundColor: AppTheme.primaryBlue.withOpacity(0.1),
+                          backgroundImage: (report.reporterAvatar != null && report.reporterAvatar!.isNotEmpty) ? NetworkImage(report.reporterAvatar!) : null,
+                          child: (report.reporterAvatar == null || report.reporterAvatar!.isEmpty) ? const Icon(Icons.person, size: 12, color: AppTheme.primaryBlue) : null,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          (report.reporterNickname != null && report.reporterNickname!.isNotEmpty)
+                              ? report.reporterNickname!
+                              : (report.reporterName != null && report.reporterName!.isNotEmpty)
+                                  ? report.reporterName!
+                                  : 'Anonim',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: isDarkMode ? Colors.white70 : Colors.black87,
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            '${upvoteCount + 1} orang menyokong laporan ini',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontStyle: FontStyle.italic,
-                              color: isDarkMode ? Colors.white60 : Colors.black54,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 20),
 
@@ -981,7 +882,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             ),
             const SizedBox(height: 4),
             Text(
-              report.verifiedStillExists >= 5 
+              report.verifiedStillExists >= 5
                 ? 'Adakah aduan ini masih di sini?'
                 : 'Adakah masalah ini masih wujud?',
               textAlign: TextAlign.center,
@@ -996,7 +897,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-          _buildWazeButton(
+          _buildActionItem(
             icon: Icons.error_outline_rounded,
             label: 'Masih Ada',
             color: report.isOwnReport(_authService.currentUser?.id, currentDeviceId: _deviceId) ? Colors.grey : AppTheme.primaryRed,
@@ -1013,7 +914,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             isDarkMode: isDarkMode,
           ),
           const SizedBox(height: 12),
-          _buildWazeButton(
+          _buildActionItem(
             icon: Icons.check_circle_outline_rounded,
             label: 'Dah Selesai',
             color: report.isOwnReport(_authService.currentUser?.id, currentDeviceId: _deviceId) ? Colors.grey : AppTheme.primaryBlue,
@@ -1044,7 +945,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  Widget _buildWazeButton({
+  Widget _buildActionItem({
     required IconData icon,
     required String label,
     required Color color,

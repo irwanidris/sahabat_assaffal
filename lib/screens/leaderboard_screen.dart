@@ -67,16 +67,20 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                       separatorBuilder: (_, __) => const Divider(),
                       itemBuilder: (context, index) {
                         final user = _topUsers[index + 3];
+                        final avatarUrl = user['avatar_url'] as String?;
                         return ListTile(
                           leading: CircleAvatar(
                             backgroundColor: AppTheme.primaryBlue.withOpacity(0.1),
-                            child: Text('${index + 4}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty) ? NetworkImage(avatarUrl) : null,
+                            child: (avatarUrl == null || avatarUrl.isEmpty) 
+                              ? Text('${index + 4}', style: const TextStyle(fontWeight: FontWeight.bold))
+                              : null,
                           ),
                           title: Text(
                             user['nickname'] ?? 'Pengguna Anonim',
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
-                          subtitle: Text('Penyumbang Terbilang'),
+                          subtitle: Text(_getBadgeName(user['badges'])),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -119,12 +123,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   }
 
   Widget _buildPodiumItem(Map<String, dynamic> user, int rank, double height, bool isDarkMode) {
+    final avatarUrl = user['avatar_url'] as String?;
     return Column(
       children: [
         CircleAvatar(
           radius: rank == 1 ? 35 : 25,
           backgroundColor: rank == 1 ? Colors.amber : (rank == 2 ? Colors.grey.shade400 : Colors.orange.shade300),
-          child: const Icon(Icons.person, color: Colors.white),
+          backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty) ? NetworkImage(avatarUrl) : null,
+          child: (avatarUrl == null || avatarUrl.isEmpty) ? const Icon(Icons.person, color: Colors.white) : null,
         ),
         const SizedBox(height: 8),
         Text(
@@ -163,5 +169,17 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         ),
       ],
     );
+  }
+
+  String _getBadgeName(dynamic badges) {
+    if (badges == null || (badges is List && badges.isEmpty)) return 'Sahabat Komuniti';
+    final List list = badges is List ? badges : [];
+    if (list.contains('diamond_hero')) return 'Diamond Hero 💎';
+    if (list.contains('gold_hero')) return 'Gold Hero 🥇';
+    if (list.contains('silver_hero')) return 'Silver Hero 🥈';
+    if (list.contains('bronze_hero')) return 'Bronze Hero 🥉';
+    if (list.contains('reporter_100')) return 'Wira 100 Aduan';
+    if (list.contains('reporter_50')) return 'Wira 50 Aduan';
+    return 'Sahabat Komuniti';
   }
 }

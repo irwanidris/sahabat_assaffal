@@ -22,7 +22,13 @@ class DisclaimerScreen extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: isDarkMode ? AppTheme.darkSurface : Colors.white,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: isDarkMode
+                ? [const Color(0xFF1A1A1A), const Color(0xFF2C2C2C)]
+                : [const Color(0xFFE3F2FD), const Color(0xFFFFFDE7)], // Biru Muda & Kuning Muda
+          ),
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
@@ -52,13 +58,13 @@ class DisclaimerScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               _buildText(
-                'Aplikasi Sahabat Assaffal adalah inisiatif komuniti awam yang bertujuan memudahkan penyaluran maklumat kerosakan infrastruktur melalui verifikasi komuniti.',
+                'Sahabat Assaffal ialah inisiatif komuniti untuk memudahkan penyaluran dan pengesahan maklumat kerosakan infrastruktur secara telus.',
               ),
               _buildText(
-                'Laporan anda akan disiarkan secara langsung dan boleh disahkan oleh pengguna lain di lokasi kejadian. Aduan yang telah disahkan oleh komuniti akan dipanjangkan untuk rekod pihak urus setia atau agensi bertanggungjawab.',
+                'Laporan anda akan disiarkan terus dan disahkan oleh komuniti sebelum dipanjangkan kepada pihak berkuasa untuk rekod dan tindakan lanjut.',
               ),
               _buildText(
-                'Segala hasil usaha atau tindakan pembaikan adalah tertakluk sepenuhnya di bawah bidang kuasa agensi berkaitan. Sahabat Assaffal tidak bertanggungjawab ke atas sebarang tindakan atau ketiadaan tindakan oleh pihak berkuasa.',
+                'Tindakan pembaikan adalah tertakluk sepenuhnya kepada agensi berkaitan. Sahabat Assaffal tidak bertanggungjawab atas sebarang keputusan atau tindakan pihak berkuasa.',
               ),
               const SizedBox(height: 20),
               Container(

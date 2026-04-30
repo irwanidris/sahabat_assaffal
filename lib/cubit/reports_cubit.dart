@@ -45,10 +45,10 @@ class ReportsCubit extends Cubit<ReportsState> {
 
   ReportsCubit(this._supabaseService) : super(ReportsInitial());
 
-  Future<void> loadReports({bool shuffle = false}) async {
+  Future<void> loadReports({bool shuffle = false, bool isAdmin = false}) async {
     emit(ReportsLoading());
     try {
-      var reports = await _supabaseService.fetchReports();
+      var reports = await _supabaseService.fetchReports(isAdmin: isAdmin);
       final count = await _supabaseService.getReportCount();
       
       if (shuffle) {
@@ -61,10 +61,10 @@ class ReportsCubit extends Cubit<ReportsState> {
     }
   }
 
-  Future<void> refreshReports({bool shuffle = false}) async {
+  Future<void> refreshReports({bool shuffle = false, bool isAdmin = false}) async {
     // Don't show loading state for refresh to keep current list visible
     try {
-      var reports = await _supabaseService.fetchReports();
+      var reports = await _supabaseService.fetchReports(isAdmin: isAdmin);
       final count = await _supabaseService.getReportCount();
       
       if (shuffle) {

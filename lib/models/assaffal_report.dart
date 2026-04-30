@@ -12,11 +12,12 @@ class AssaffalReport extends Equatable {
   final String? duration;
   final String status;
   final DateTime createdAt;
-  final String? reportCode; // AA0001
+  final String? reportCode; // TK0001
   final String? resolvedBy;
   final String? department;
   final String? assignedTo; // ID Moderator yang sedang memproses
   final String? assignedName; // Nama Moderator yang sedang memproses
+  final DateTime? deletedAt; // For soft delete
   
   // New gamification/community fields
   final String? deviceId;
@@ -35,6 +36,9 @@ class AssaffalReport extends Equatable {
   final String category;
   final String? reporterName;
   final String? reporterContact;
+  final String? nickname;
+  final String? reporterNickname; // From device_users join
+  final String? reporterAvatar;   // From device_users join
   final int editCount;
 
   const AssaffalReport({
@@ -66,7 +70,11 @@ class AssaffalReport extends Equatable {
     this.category = 'Lubang Jalan',
     this.reporterName,
     this.reporterContact,
+    this.nickname,
+    this.reporterNickname,
+    this.reporterAvatar,
     this.editCount = 0,
+    this.deletedAt,
   });
 
   factory AssaffalReport.fromJson(Map<String, dynamic> json) {
@@ -99,7 +107,11 @@ class AssaffalReport extends Equatable {
       category: json['category'] ?? 'Lubang Jalan',
       reporterName: json['reporter_name'],
       reporterContact: json['reporter_contact'],
+      nickname: json['nickname'],
+      reporterNickname: json['reporter_nickname'],
+      reporterAvatar: json['reporter_avatar'],
       editCount: json['edit_count'] ?? 0,
+      deletedAt: json['deleted_at'] != null ? DateTime.parse(json['deleted_at']) : null,
     );
   }
 
@@ -125,8 +137,21 @@ class AssaffalReport extends Equatable {
       'category': category,
       'reporter_name': reporterName,
       'reporter_contact': reporterContact,
+      'nickname': nickname,
       'edit_count': editCount,
+      'deleted_at': deletedAt?.toIso8601String(),
     };
+  }
+
+  bool isSoftDeleted() {
+    return deletedAt != null;
+  }
+
+  bool canRestore() {
+    if (deletedAt == null) return false;
+    final now = DateTime.now();
+    final difference = now.difference(deletedAt!);
+    return difference.inDays < 3;
   }
 
   bool canEdit() {
@@ -146,10 +171,13 @@ class AssaffalReport extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, imageUrl, latitude, longitude, status, upvoteCount, category];
+  List<Object?> get props => [id, imageUrl, latitude, longitude, status, upvoteCount, category, nickname];
 
   // Helper for Malaysia Time (GMT+8)
   DateTime get createdAtMYT => createdAt.toUtc().add(const Duration(hours: 8));
+
+  // Getter for coordinates
+  String get coordinates => '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
 
   // Image helpers
   List<String> get allImages => imageUrl.split(',').where((s) => s.isNotEmpty).toList();
