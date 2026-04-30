@@ -56,10 +56,13 @@ class _NewsScreenState extends State<NewsScreen> with SingleTickerProviderStateM
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      body: SafeArea(
+      body: Container(
+        padding: EdgeInsets.only(
+          top: MediaQuery.of(context).padding.top + 110,
+          bottom: 100,
+        ),
         child: Column(
           children: [
-            _buildGlassHeader(isDarkMode),
             _buildTabBar(isDarkMode),
             Expanded(
               child: TabBarView(
@@ -472,74 +475,6 @@ extension on _NewsScreenState {
         if (_isLoadingFB)
           const Center(child: CircularProgressIndicator(color: AppTheme.primaryRed)),
       ],
-    );
-  }
-
-  Widget _buildGlassHeader(bool isDarkMode) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1)),
-            ),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: Image.asset(
-                    'assets/images/app_icon.png',
-                    width: 32,
-                    height: 32,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(Icons.report_problem),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Sahabat Assaffal',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: isDarkMode ? Colors.white : Colors.black87,
-                      ),
-                    ),
-                    const Text(
-                      'Suara Kita Semua',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontStyle: FontStyle.italic,
-                        color: AppTheme.primaryRed,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: Icon(Icons.refresh_rounded, color: isDarkMode ? Colors.white70 : Colors.black87),
-                  onPressed: () {
-                    if (_tabController.index == 0) {
-                      _fetchNativeNews();
-                    } else {
-                      _fbController.reload();
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

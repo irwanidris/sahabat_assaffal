@@ -17,9 +17,17 @@ class SupabaseService {
   // ============================================
   // POINTS CONSTANTS
   // ============================================
-  static const int POINTS_REPORT = 50;
+  static const int POINTS_REPORT = 100; // Dinaikkan dari 50
   static const int POINTS_VOTE = 5;
   static const int POINTS_VERIFY = 20;
+  static const int POINTS_FIRST_LOGIN = 30;
+  static const int POINTS_REFERRAL = 95; // Nilai Promosi (90 Hari)
+  static const int POINTS_REFERRAL_BASE = 30; // Nilai Asas selepas promo
+  static const int POINTS_DAILY_LOGIN = 10;
+  static const int POINTS_FALSE_REPORT = -50;
+  static const int POINTS_VERIFIED_MEMBER = 500;
+  static const int POINTS_BONUS_REPORTER_RESOLVED = 200;
+  static const int POINTS_BONUS_VOTER_RESOLVED = 50;
 
   // ============================================
   // NOTIFICATIONS ENGINE
@@ -27,12 +35,24 @@ class SupabaseService {
 
   Future<List<Map<String, dynamic>>> fetchNotifications({String? userId}) async {
     try {
+      // 1. Auto-Expiry: Padam notifikasi > 14 hari
+      final fourteenDaysAgo = DateTime.now().subtract(const Duration(days: 14)).toIso8601String();
+      try {
+        await _client
+            .from('notifications')
+            .delete()
+            .lt('created_at', fourteenDaysAgo);
+      } catch (e) {
+        debugPrint('Auto-expiry error: $e');
+      }
+
+      // 2. Ambil notifikasi
       var query = _client.from('notifications').select();
-      
+
       if (userId != null) {
         query = query.or('user_id.eq.$userId,user_id.is.null');
       }
-      
+
       final response = await query.order('created_at', ascending: false);
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
@@ -65,9 +85,15 @@ class SupabaseService {
 
   Future<void> markNotificationAsRead(String notificationId) async {
     try {
+      // Cuba tukar ID kepada Integer jika ia adalah nombor,
+      // kerana Supabase biasanya menggunakan Integer untuk Primary Key
+      final dynamic finalId = int.tryParse(notificationId) ?? notificationId;
+
       await _client.from('notifications').update({
         'is_read': true,
-      }).eq('id', notificationId);
+      }).eq('id', finalId);
+
+      debugPrint('Notification $notificationId marked as read in DB');
     } catch (e) {
       debugPrint('Error marking notification as read: $e');
     }
@@ -77,9 +103,14 @@ class SupabaseService {
     try {
       var query = _client.from('notifications').update({'is_read': true});
       if (userId != null) {
-        query = query.eq('user_id', userId);
+        // Tanda semua notifikasi peribadi DAN global sebagai baca
+        query = query.or('user_id.eq.$userId,user_id.is.null');
+      } else {
+        // Jika tidak login, hanya tanda yang global
+        query = query.isFilter('user_id', null);
       }
       await query;
+      debugPrint('All notifications marked as read for user: $userId');
     } catch (e) {
       debugPrint('Error marking all notifications as read: $e');
     }
@@ -92,7 +123,7 @@ class SupabaseService {
   Future<List<Map<String, dynamic>>> fetchNews({bool approvedOnly = true, String? author}) async {
     try {
       var query = _client.from('news').select();
-      
+
       if (approvedOnly) {
         query = query.eq('status', 'approved');
       }
@@ -100,7 +131,7 @@ class SupabaseService {
       if (author != null) {
         query = query.eq('author', author);
       }
-      
+
       final response = await query.order('created_at', ascending: false);
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
@@ -163,13 +194,13 @@ class SupabaseService {
     try {
       final finalId = newsId; // Gunakan ID asal (String/UUID)
       debugPrint('Updating news $finalId to status $status');
-      
+
       // 1. Dapatkan data berita dahulu
       final newsData = await _client.from('news')
           .select('title, category, author_id')
           .eq('id', finalId)
           .single();
-      
+
       // 2. Kemaskini status
       await _client.from('news')
           .update({'status': status})
@@ -182,7 +213,7 @@ class SupabaseService {
         if (status == 'approved') {
           final String title = newsData['title'] ?? 'Berita Baru';
           final String category = newsData['category'] ?? 'Berita';
-          
+
           await _sendPushNotification(
             toAll: true,
             title: "BERITA SAHABAT ASSAFFAL",
@@ -217,7 +248,7 @@ class SupabaseService {
         }
       } catch (e) {
         debugPrint('Notification Silenced Error: $e');
-        // Kita tidak throw ralat supaya UI tidak menunjukkan kegagalan 
+        // Kita tidak throw ralat supaya UI tidak menunjukkan kegagalan
         // sedangkan data DB sudah berjaya dikemaskini.
       }
     } catch (e) {
@@ -239,43 +270,74 @@ class SupabaseService {
   // IMAGE WATERMARK HELPERS
   // ============================================
 
-  Future<File> _applyWatermark(File imageFile, {bool isThumbnail = true}) async {
+  Future<File> _applyWatermark(
+    File imageFile, {
+    bool isThumbnail = true,
+    String? nickname,
+    String? coords,
+    String? dateTime,
+  }) async {
     try {
       final bytes = await imageFile.readAsBytes();
       img.Image? originalImage = img.decodeImage(bytes);
       if (originalImage == null) return imageFile;
 
-      // Load watermark from assets
+      // 1. Lukis Logo di tengah
       final ByteData watermarkData = await rootBundle.load('assets/images/logo_s_assaffal.png');
       final List<int> watermarkBytes = watermarkData.buffer.asUint8List();
       img.Image? watermark = img.decodeImage(Uint8List.fromList(watermarkBytes));
-      if (watermark == null) return imageFile;
 
-      // Calculate watermark size (100-120 for thumbnails, 150 for full view)
-      int watermarkSize = isThumbnail ? 120 : 150;
-      watermark = img.copyResize(watermark, width: watermarkSize);
+      if (watermark != null) {
+        int watermarkSize = isThumbnail ? 120 : 180;
+        watermark = img.copyResize(watermark, width: watermarkSize);
+        int posX = (originalImage.width - watermark.width) ~/ 2;
+        int posY = (originalImage.height - watermark.height) ~/ 2 - 40;
 
-      // Set watermark opacity (0.5)
-      // Note: image library doesn't have a direct opacity function for the whole image easily
-      // but we can draw it with a composite function if needed, 
-      // or just assume the asset itself is already semi-transparent or use it as is.
-      // For simplicity in this implementation, we use drawImage.
+        img.compositeImage(
+          originalImage,
+          watermark,
+          dstX: posX,
+          dstY: posY,
+          blend: img.BlendMode.alpha
+        );
+      }
 
-      // Position: Center
-      int posX = (originalImage.width - watermark.width) ~/ 2;
-      int posY = (originalImage.height - watermark.height) ~/ 2;
+      // 2. Lukis Teks Metadata di bawah Logo
+      if (nickname != null || coords != null || dateTime != null) {
+        String watermarkText = "";
+        if (nickname != null) watermarkText += "Oleh: $nickname\n";
+        if (dateTime != null) watermarkText += "$dateTime\n";
+        if (coords != null) watermarkText += "GPS: $coords";
 
-      img.compositeImage(
-        originalImage, 
-        watermark, 
-        dstX: posX, 
-        dstY: posY,
-        blend: img.BlendMode.alpha
-      );
+        int textY = (originalImage.height ~/ 2) + 60;
 
-      final watermarkedBytes = img.encodeJpg(originalImage, quality: 80);
-      final watermarkedFile = File(imageFile.path)..writeAsBytesSync(watermarkedBytes);
-      return watermarkedFile;
+        img.drawString(
+          originalImage,
+          watermarkText,
+          font: img.arial24,
+          x: (originalImage.width ~/ 2) - 148,
+          y: textY + 2,
+          color: img.ColorRgba8(0, 0, 0, 160)
+        );
+
+        img.drawString(
+          originalImage,
+          watermarkText,
+          font: img.arial24,
+          x: (originalImage.width ~/ 2) - 150,
+          y: textY,
+          color: img.ColorRgba8(255, 255, 255, 255)
+        );
+      }
+
+      final watermarkedBytes = img.encodeJpg(originalImage, quality: 85);
+
+      // Guna path sementara untuk elak overwrite fail asal (elak overlapping jika retry)
+      final tempDir = Directory.systemTemp;
+      final tempFile = File('${tempDir.path}/wm_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await tempFile.writeAsBytes(watermarkedBytes);
+
+      return tempFile;
     } catch (e) {
       debugPrint('Error applying watermark: $e');
       return imageFile;
@@ -292,20 +354,28 @@ class SupabaseService {
     List<Map<String, String>>? filters,
     required String title,
     required String message,
+    Map<String, dynamic>? data,
   }) async {
     try {
       final Map<String, dynamic> body = {
         'app_id': OneSignalConfig.appId,
         'headings': {'en': title},
         'contents': {'en': message},
+        'android_accent_color': 'FFE53935',
+        'small_icon': 'ic_stat_onesignal_default',
+        'android_sound': 'assaffal_sound',
+        'ios_sound': 'assaffal_sound.wav',
+        if (data != null) 'data': data,
       };
 
       if (toAll) {
-        body['included_segments'] = ['All'];
+        // 'Subscribed Users' adalah segmen default yang paling dipercayai
+        body['included_segments'] = ['Subscribed Users'];
       } else if (filters != null && filters.isNotEmpty) {
         body['filters'] = filters;
       } else if (targetPushIds != null && targetPushIds.isNotEmpty) {
-        body['include_player_ids'] = targetPushIds;
+        // Gunakan include_subscription_ids untuk SDK versi baru
+        body['include_subscription_ids'] = targetPushIds;
       } else {
         return;
       }
@@ -324,9 +394,10 @@ class SupabaseService {
         debugPrint('OneSignal API Error: ${response.statusCode} - ${response.body}');
         return;
       }
-      
+
       final responseData = jsonDecode(response.body);
       debugPrint('OneSignal Success: ${responseData['recipients'] ?? 0} recipients');
+      debugPrint('OneSignal Response: ${response.body}');
     } catch (e) {
       // Kita log ralat tetapi tidak rethrow supaya tidak mengganggu flow utama (DB/Points/UI)
       debugPrint('Notification suppressed error: $e');
@@ -340,9 +411,9 @@ class SupabaseService {
   Future<Map<String, dynamic>?> getUserProfile(String userId) async {
     try {
       final response = await _client
-          .from('profiles')
+          .from('device_users')
           .select()
-          .eq('id', userId)
+          .eq('user_id', userId)
           .maybeSingle();
       return response;
     } catch (e) {
@@ -369,28 +440,66 @@ class SupabaseService {
   // REPORTS LOGIC
   // ============================================
 
-  Future<List<AssaffalReport>> fetchReports() async {
+  Future<List<AssaffalReport>> fetchReports({bool isAdmin = false}) async {
     try {
-      final response = await _client
+      var query = _client
           .from('pothole_reports')
-          .select()
-          .order('created_at', ascending: false);
+          .select('*'); // <--- Ambil data report sahaja tanpa join
 
-      return (response as List)
-          .map((json) => AssaffalReport.fromJson(json))
-          .toList();
+      // Jika bukan admin, tapis mengikut logik privasi
+      if (!isAdmin) {
+        query = query.or('category.eq.Lubang Jalan,status.neq.pending');
+      }
+
+      final response = await query.order('created_at', ascending: false);
+
+      return (response as List).map((data) {
+        final json = Map<String, dynamic>.from(data);
+        // Map joined data to model fields
+        if (json['device_users'] != null) {
+          json['reporter_nickname'] = json['device_users']['nickname'];
+          json['reporter_avatar'] = json['device_users']['avatar_url'];
+          json['nickname'] = json['device_users']['nickname'];
+        }
+        return AssaffalReport.fromJson(json);
+      }).toList();
     } catch (e) {
-      throw Exception('Failed to fetch reports: $e');
+      debugPrint('Error in fetchReports: $e');
+      // Fallback to simple select if join fails
+      try {
+        var fallbackQuery = _client.from('pothole_reports').select('*');
+        if (!isAdmin) {
+          fallbackQuery = fallbackQuery.or('category.eq.Lubang Jalan,status.neq.pending');
+        }
+        final fallbackResponse = await fallbackQuery.order('created_at', ascending: false);
+        return (fallbackResponse as List).map((data) {
+          return AssaffalReport.fromJson(Map<String, dynamic>.from(data));
+        }).toList();
+      } catch (e2) {
+        throw Exception('Failed to fetch reports: $e2');
+      }
     }
   }
 
-  Future<String> uploadImage(File imageFile, {bool applyWatermark = true}) async {
+  Future<String> uploadImage(
+    File imageFile, {
+    bool applyWatermark = false,
+    String? nickname,
+    String? coords,
+    String? dateTime,
+  }) async {
     try {
       File fileToUpload = imageFile;
       if (applyWatermark) {
-        fileToUpload = await _applyWatermark(imageFile, isThumbnail: false);
+        fileToUpload = await _applyWatermark(
+          imageFile,
+          isThumbnail: false,
+          nickname: nickname,
+          coords: coords,
+          dateTime: dateTime,
+        );
       }
-      
+
       final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
       final bytes = await fileToUpload.readAsBytes();
 
@@ -427,7 +536,7 @@ class SupabaseService {
       // 1. Anti-Spam Check: Limit 1 report per device every 3 minutes
       if (deviceId != null) {
         final threeMinutesAgo = DateTime.now().subtract(const Duration(minutes: 3)).toIso8601String();
-        
+
         final existingReport = await _client
             .from('pothole_reports')
             .select('id')
@@ -440,11 +549,13 @@ class SupabaseService {
         }
       }
 
-      // 2. Generate unique report code
-      final countResponse = await _client.from('pothole_reports').select('id').count(CountOption.exact);
-      final count = (countResponse.count ?? 0) + 1;
-      final reportCode = 'AA${count.toString().padLeft(4, '0')}';
+      // Gunakan 5 angka terakhir dari timestamp untuk menjamin keunikan kod
+      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final String uniqueSuffix = timestamp.substring(timestamp.length - 5);
+      final reportCode = 'TK$uniqueSuffix';
 
+      // --- KEMASKINI DI SINI: Buang .select().single() untuk elak ralat 42P10 ---
+      // Gantikan blok insert sedia ada dengan ini
       await _client.from('pothole_reports').insert({
         'image_url': imageUrl,
         'latitude': latitude,
@@ -453,7 +564,7 @@ class SupabaseService {
         'area_name': areaName,
         'description': description,
         'duration': duration,
-        'status': 'active', // Terus aktif tanpa moderator
+        'status': 'pending',
         'device_id': deviceId,
         'user_id': userId,
         'severity': severity,
@@ -468,21 +579,50 @@ class SupabaseService {
         'verified_fake': 0,
       });
 
-      await _sendPushNotification(
-        toAll: true,
-        title: "ADUAN SAHABAT ASSAFFAL",
-        message: "Aduan Baru: $category di $areaName",
-      );
+// Memandangkan kita tak guna .select().single(),
+// kita tak dapat ID untuk notifikasi, jadi kita guna reportCode sebagai rujukan buat masa ni.
+      final String actualId = reportCode;
 
-      await saveNotification(
-        title: "ADUAN SAHABAT ASSAFFAL",
-        message: "Aduan Baru: $category di $areaName",
-        type: 'new_report',
-        relatedId: reportCode,
-      );
+      // 3. Logic Notifikasi
+      if (category == 'Lubang Jalan') {
+        await _sendPushNotification(
+          toAll: true,
+          title: "ADUAN BERHAMPIRAN ANDA 📍",
+          message: "Aduan baru di $areaName. Sila bantu sahkan keadaan jalan ini demi keselamatan bersama!",
+          data: {'type': 'report', 'id': actualId, 'report_code': reportCode},
+        );
 
-      // Agihan Mata: Laporan Baru
-      await _deviceService.addPoints(POINTS_REPORT, reason: 'Lapor Lubang');
+        await _sendPushNotification(
+          filters: [
+            {"field": "tag", "key": "role", "relation": "=", "value": "admin_staff"}
+          ],
+          title: "🚨 PERHATIAN ADMIN",
+          message: "Aduan Baru $reportCode memerlukan semakan di $areaName",
+          data: {'type': 'report', 'id': actualId},
+        );
+
+        await saveNotification(
+          title: "ADUAN SAHABAT ASSAFFAL",
+          message: "Aduan Baru: $category di $areaName",
+          type: 'new_report',
+          relatedId: actualId,
+        );
+      } else {
+        await _sendInternalEmailRaw(
+          category: category,
+          areaName: areaName,
+          address: address,
+          latitude: latitude,
+          longitude: longitude,
+          reporterName: reporterName,
+          reporterContact: reporterContact,
+          imageUrl: imageUrl,
+          description: description,
+        );
+      }
+
+      // Agihan Mata
+      await _deviceService.addPoints(POINTS_REPORT, reason: 'Lapor Masalah');
       await _deviceService.incrementReportCount();
 
     } catch (e) {
@@ -493,19 +633,30 @@ class SupabaseService {
   Future<void> verifyReportCommunity(String reportId, String userId, String type, {String? imageUrl}) async {
     try {
       final intId = int.tryParse(reportId);
-      
-      // 1. Semak jika ini adalah aduan sendiri (Owner cannot vote)
+
+      // 1. Semak jika ini adalah aduan sendiri
       final reportCheck = await _client
           .from('pothole_reports')
           .select('user_id, device_id')
           .eq('id', intId ?? reportId)
           .single();
-      
+
       if (reportCheck['user_id'] == userId) {
         throw Exception('Pengadu tidak dibenarkan mengundi laporan sendiri.');
       }
 
-      // 2. Simpan rekod verifikasi (Unique constraint akan halang double vote dari user sama)
+      // 2. Semak status Verified pengundi untuk menentukan Kuasa Undi
+      final voterProfile = await _client
+          .from('device_users')
+          .select('is_verified, total_verifications')
+          .eq('user_id', userId)
+          .single();
+
+      final bool isVoterVerified = voterProfile['is_verified'] == true;
+      final int currentVoterVerifications = voterProfile['total_verifications'] ?? 0;
+      final int voteWeight = isVoterVerified ? 2 : 1; // Kuasa undi berganda jika verified
+
+      // 3. Simpan rekod verifikasi
       await _client.from('report_verifications').insert({
         'report_id': intId ?? reportId,
         'user_id': userId,
@@ -513,7 +664,7 @@ class SupabaseService {
         'proof_image_url': imageUrl,
       });
 
-      // 2. Kemaskini kaunter dalam pothole_reports
+      // 4. Kemaskini kaunter dalam pothole_reports
       String column = '';
       if (type == 'exists') column = 'verified_still_exists';
       else if (type == 'resolved') column = 'verified_resolved';
@@ -522,38 +673,60 @@ class SupabaseService {
       if (column.isNotEmpty) {
         final currentData = await _client
             .from('pothole_reports')
-            .select('$column, resolved_image_url')
+            .select('$column, resolved_image_url, status')
             .eq('id', intId ?? reportId)
             .single();
-        
+
         final int currentCount = currentData[column] ?? 0;
+        final String currentStatus = currentData['status'] ?? 'pending';
         final String? existingResolvedImage = currentData['resolved_image_url'];
-        
+
         final Map<String, dynamic> updateData = {
-          column: currentCount + 1
+          column: currentCount + voteWeight
         };
 
-        // Jika ini adalah bukti selesai pertama atau kita mahu kemaskini bukti utama
         if (type == 'resolved' && imageUrl != null && existingResolvedImage == null) {
           updateData['resolved_image_url'] = imageUrl;
         }
-        
+
         await _client
             .from('pothole_reports')
             .update(updateData)
             .eq('id', intId ?? reportId);
 
-        // 3. Logik Automatik: Jika 'resolved' mencapai 5 undian, tukar status terus
-        if (type == 'resolved' && (currentCount + 1) >= 5) {
-          await updateReportStatus(reportId, 'resolved');
-        }
-        
-        // 4. Logik Automatik: Jika 'fake' mencapai 3 undian, tandakan sebagai fake/archived
-        if (type == 'fake' && (currentCount + 1) >= 3) {
-          await updateReportStatus(reportId, 'fake');
+        // 5. Kemaskini jumlah verifikasi pengundi
+        final Map<String, dynamic> userUpdate = {
+          'total_verifications': currentVoterVerifications + 1,
+          'updated_at': DateTime.now().toIso8601String(),
+        };
+
+        // Syarat Tambahan: Jika sahkan "Masih Ada" pada laporan MERAH
+        if (type == 'exists' && (currentStatus == 'active' || currentStatus == 'processing')) {
+          final profileRes = await _client.from('device_users').select('total_exists_verifications').eq('user_id', userId).single();
+          int currentExistsVer = profileRes['total_exists_verifications'] ?? 0;
+          userUpdate['total_exists_verifications'] = currentExistsVer + 1;
         }
 
-        // Agihan Mata: Verifikasi Komuniti
+        await _client.from('device_users').update(userUpdate).eq('user_id', userId);
+
+        // 6. Logik Automatik Status
+        if (type == 'resolved' && (currentCount + voteWeight) >= 5) {
+          await updateReportStatus(reportId, 'resolved');
+
+          final String reporterUserId = reportCheck['user_id'] ?? '';
+          if (reporterUserId.isNotEmpty) {
+            await _deviceService.addPointsToUserByUserId(reporterUserId, POINTS_BONUS_REPORTER_RESOLVED, reason: 'Bonus: Aduan Selesai Disahkan');
+          }
+        }
+
+        if (type == 'fake' && (currentCount + voteWeight) >= 3) {
+          await updateReportStatus(reportId, 'fake');
+          final String reporterUserId = reportCheck['user_id'] ?? '';
+          if (reporterUserId.isNotEmpty) {
+            await _deviceService.addPointsToUserByUserId(reporterUserId, POINTS_FALSE_REPORT, reason: 'Aduan Palsu (Komuniti)');
+          }
+        }
+
         await _deviceService.addPoints(POINTS_VERIFY, reason: 'Verifikasi Komuniti');
       }
     } catch (e) {
@@ -577,7 +750,7 @@ class SupabaseService {
   }
 
   Future<void> updateReportStatus(
-    String reportId, 
+    String reportId,
     String status, {
     String? resolvedImageUrl,
     String? assignedTo,
@@ -585,7 +758,7 @@ class SupabaseService {
   }) async {
     try {
       final intId = int.tryParse(reportId);
-      
+
       final reportData = await _client
           .from('pothole_reports')
           .select('reporter_push_id, category, area_name, assigned_to, user_id')
@@ -604,7 +777,7 @@ class SupabaseService {
       if (resolvedImageUrl != null) {
         updatePayload['resolved_image_url'] = resolvedImageUrl;
       }
-      
+
       // Simpan siapa yang ambil tugasan
       if (assignedTo != null) {
         updatePayload['assigned_to'] = assignedTo;
@@ -618,20 +791,28 @@ class SupabaseService {
           .update(updatePayload)
           .eq('id', intId ?? reportId);
 
-      // Notification Logic
       String title = "";
       String message = "";
       final String pushId = reportData['reporter_push_id'] ?? '';
+      final String? ownerUserId = reportData['user_id'];
       final String category = reportData['category'] ?? 'Aduan';
       final String area = reportData['area_name'] ?? 'Kawasan';
 
       if (status == 'processing') {
         title = "ADUAN KINI DIPROSES";
         message = "Aduan anda bagi $category di $area sedang diambil tindakan oleh pihak berwajib.";
-        
+
         if (pushId.isNotEmpty) {
           await _sendPushNotification(
             targetPushIds: [pushId],
+            title: title,
+            message: message,
+          );
+        } else if (ownerUserId != null) {
+          await _sendPushNotification(
+            filters: [
+              {"field": "tag", "key": "user_id", "relation": "=", "value": ownerUserId}
+            ],
             title: title,
             message: message,
           );
@@ -647,7 +828,7 @@ class SupabaseService {
       } else if (status == 'resolved') {
         title = "ADUAN SELESAI ✅";
         message = "Berita Baik! Aduan bagi $category di $area telah berjaya diselesaikan.";
-        
+
         // Hantar kepada SEMUA orang supaya nampak kerja buat YB & Team
         await _sendPushNotification(
           toAll: true,
@@ -668,6 +849,14 @@ class SupabaseService {
         if (pushId.isNotEmpty) {
           await _sendPushNotification(
             targetPushIds: [pushId],
+            title: title,
+            message: message,
+          );
+        } else if (ownerUserId != null) {
+          await _sendPushNotification(
+            filters: [
+              {"field": "tag", "key": "user_id", "relation": "=", "value": ownerUserId}
+            ],
             title: title,
             message: message,
           );
@@ -764,43 +953,127 @@ class SupabaseService {
   }
 
   // --- Fungsi Lain ---
-  Future<void> deleteReport(String reportId) async {
+  Future<void> softDeleteReport(String reportId, String nickname) async {
     try {
       final intId = int.tryParse(reportId);
-      if (intId != null) {
-        await _client.from('pothole_reports').delete().eq('id', intId).select();
-      } else {
-        await _client.from('pothole_reports').delete().eq('id', reportId).select();
-      }
+      final now = DateTime.now().toIso8601String();
+
+      await _client.from('pothole_reports').update({
+        'deleted_at': now,
+        'status': 'deleted_by_user',
+      }).eq('id', intId ?? reportId);
+
+      // Maklumkan Admin
+      await saveNotification(
+        title: "LAPORAN DIPADAM PENGGUNA",
+        message: "Laporan #$reportId telah dipadam oleh $nickname",
+        type: 'report_deleted',
+        relatedId: reportId,
+      );
     } catch (e) {
-      throw Exception('Failed to delete report: $e');
+      throw Exception('Gagal memadam laporan: $e');
+    }
+  }
+
+  Future<void> restoreReport(String reportId) async {
+    try {
+      final intId = int.tryParse(reportId);
+      await _client.from('pothole_reports').update({
+        'deleted_at': null,
+        'status': 'pending', // Kembalikan ke pending
+      }).eq('id', intId ?? reportId);
+    } catch (e) {
+      throw Exception('Gagal memulihkan laporan: $e');
     }
   }
 
   Future<bool> sendEmailAutomated(AssaffalReport report) async {
+    return _sendInternalEmailRaw(
+      category: report.category,
+      areaName: report.areaName ?? '',
+      address: report.address ?? '',
+      latitude: report.latitude,
+      longitude: report.longitude,
+      reporterName: report.reporterName,
+      reporterContact: report.reporterContact,
+      imageUrl: report.imageUrl,
+      description: report.description,
+    );
+  }
+
+  Future<bool> _sendInternalEmailRaw({
+    required String category,
+    required String areaName,
+    required String address,
+    required double latitude,
+    required double longitude,
+    String? reporterName,
+    String? reporterContact,
+    required String imageUrl,
+    String? description,
+  }) async {
     try {
-      final String recipientEmail = report.category == 'Lain-lain' 
-          ? 'sahabatassaffal@gmail.com' 
-          : 'irwanyzan@gmail.com';
+      final String recipientEmail = category == 'Lain-lain'
+          ? 'sahabatassaffal@gmail.com'
+          : 'sahabatassaffal@gmail.com'; // Default ke email team management
 
       final response = await _client.functions.invoke(
         'send-report-email',
         body: {
           'to': recipientEmail,
           'cc': 'sahabatassaffal@gmail.com',
-          'category': report.category,
-          'area': report.areaName,
-          'address': report.address,
-          'gps': '${report.latitude}, ${report.longitude}',
-          'reporter': report.reporterName,
-          'contact': report.reporterContact,
-          'image': report.imageUrl,
-          'description': report.description,
+          'category': category,
+          'area': areaName,
+          'address': address,
+          'gps': '$latitude, $longitude',
+          'reporter': reporterName ?? 'Anonim',
+          'contact': reporterContact ?? '-',
+          'image': imageUrl,
+          'description': description ?? '-',
         },
       );
       return response.status == 200;
     } catch (e) {
+      debugPrint('Error sending internal email: $e');
       return false;
+    }
+  }
+
+  Future<void> submitVerificationRequest({
+    required String fullName,
+    required String icNumber,
+    required String address,
+    required String phoneNumber,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw Exception('Sila log masuk semula.');
+
+    try {
+      await _client.from('verification_requests').insert({
+        'user_id': user.id,
+        'full_name_ic': fullName,
+        'ic_number': icNumber,
+        'home_address': address,
+        'phone_number': phoneNumber,
+        'status': 'pending',
+      });
+
+      // Kemaskini status profil kepada pending
+      await _client.from('device_users').update({
+        'verification_status': 'pending',
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('user_id', user.id);
+
+      // Notifikasi Admin
+      await _sendPushNotification(
+        filters: [
+            {"field": "tag", "key": "role", "relation": "=", "value": "admin_staff"}
+        ],
+        title: "🛡️ PERMOHONAN VERIFIKASI",
+        message: "Seorang pengguna baru memohon status Verified User. Sila semak dokumen.",
+      );
+    } catch (e) {
+      throw Exception('Gagal menghantar permohonan: $e');
     }
   }
 
@@ -816,6 +1089,15 @@ class SupabaseService {
       return response['password'] as String == password;
     } catch (e) {
       return false;
+    }
+  }
+
+  Future<void> deleteReport(String reportId) async {
+    try {
+      final intId = int.tryParse(reportId);
+      await _client.from('pothole_reports').delete().eq('id', intId ?? reportId);
+    } catch (e) {
+      throw Exception('Gagal memadam laporan: $e');
     }
   }
 
@@ -838,7 +1120,7 @@ class SupabaseService {
           .select('user_id, device_id')
           .eq('id', intId ?? reportId)
           .single();
-      
+
       if (reportCheck['user_id'] == userId) {
         throw Exception('Anda tidak boleh menyokong laporan anda sendiri.');
       }
@@ -851,7 +1133,7 @@ class SupabaseService {
       } else {
         await _client.from('pothole_upvotes').insert({'report_id': intId ?? reportId, 'user_id': userId});
         await _updateUpvoteCount(reportId, 1);
-        
+
         // Agihan Mata: Sokongan (Upvote)
         await _deviceService.addPoints(POINTS_VOTE, reason: 'Sokong Aduan');
 
@@ -900,7 +1182,7 @@ class SupabaseService {
     // 2. Jika koordinat tidak tepat, semak berdasarkan nama kawasan yang dinormalisasi
     if (areaName != null && areaName.isNotEmpty) {
       final normalizedInput = _normalizeAreaName(areaName);
-      
+
       // Ambil laporan terbaru untuk semakan nama (limit 100 untuk prestasi)
       final allReports = await _client
           .from('pothole_reports')

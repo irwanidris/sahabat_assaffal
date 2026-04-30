@@ -1,6 +1,14 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
+import 'package:geolocator/geolocator.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
+import '../services/auth_service.dart';
 
 class InAppCameraScreen extends StatefulWidget {
   final String category;
@@ -17,6 +25,9 @@ class _InAppCameraScreenState extends State<InAppCameraScreen> with WidgetsBindi
   bool _isCapturing = false;
   int _selectedCameraIndex = 0;
   FlashMode _flashMode = FlashMode.auto;
+  final AuthService _authService = AuthService();
+
+  // ... (keeping initState, dispose, didChangeAppLifecycleState, _initializeCamera, _setupCamera unchanged)
 
   @override
   void initState() {
@@ -80,12 +91,70 @@ class _InAppCameraScreenState extends State<InAppCameraScreen> with WidgetsBindi
     setState(() => _isCapturing = true);
     try {
       final XFile photo = await _controller!.takePicture();
-      if (mounted) Navigator.pop(context, File(photo.path));
+      
+      // Ambil lokasi terkini
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      } catch (e) {
+        debugPrint('Gagal ambil lokasi untuk watermark: $e');
+      }
+
+      // Proses Watermark
+      final File watermarkedFile = await _applyWatermark(File(photo.path), position);
+      
+      if (mounted) Navigator.pop(context, watermarkedFile);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal mengambil gambar: $e')));
     } finally {
       if (mounted) setState(() => _isCapturing = false);
     }
+  }
+
+  Future<File> _applyWatermark(File imageFile, Position? pos) async {
+    final Uint8List imageBytes = await imageFile.readAsBytes();
+    img.Image? originalImage = img.decodeImage(imageBytes);
+    if (originalImage == null) return imageFile;
+
+    // Load Logo dari Assets
+    ByteData logoData = await rootBundle.load('assets/images/logo_s_assaffal.png');
+    img.Image? logo = img.decodeImage(logoData.buffer.asUint8List());
+
+    if (logo != null) {
+      // Kecilkan logo jika perlu (contoh 15% dari lebar gambar)
+      int logoWidth = (originalImage.width * 0.15).toInt();
+      img.Image resizedLogo = img.copyResize(logo, width: logoWidth);
+
+      // Letak logo di tengah-tengah
+      int posX = (originalImage.width - resizedLogo.width) ~/ 2;
+      int posY = (originalImage.height - resizedLogo.height) ~/ 2;
+
+      img.compositeImage(originalImage, resizedLogo, dstX: posX, dstY: posY);
+    }
+
+    // Siapkan Teks (Tarikh, Koordinat, Nickname)
+    String dateStr = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+    String locStr = pos != null ? '${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)}' : 'Lokasi tidak dikesan';
+    String nickname = _authService.currentUser?.userMetadata?['nickname'] ?? 'User';
+    String infoText = '$dateStr | $locStr | $nickname';
+
+    // Lukis Teks di bahagian bawah kiri
+    img.drawString(
+      originalImage,
+      infoText,
+      font: img.arial24,
+      x: 20,
+      y: originalImage.height - 50,
+      color: img.ColorRgb8(255, 255, 255),
+    );
+
+    // Simpan fail baru
+    final tempDir = await getTemporaryDirectory();
+    final String watermarkedPath = '${tempDir.path}/wm_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final File watermarkedFile = File(watermarkedPath);
+    await watermarkedFile.writeAsBytes(img.encodeJpg(originalImage, quality: 90));
+    
+    return watermarkedFile;
   }
 
   void _toggleFlash() {

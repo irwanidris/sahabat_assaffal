@@ -182,6 +182,10 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
     final user = _authService.currentUser;
     if (user == null) return;
 
+    // Ambil nickname terkini daripada device_users untuk integriti data
+    final profile = await _supabaseService.getUserProfile(user.id);
+    final String displayName = profile?['nickname'] ?? user.userMetadata?['full_name'] ?? 'Admin';
+
     String role = 'User';
     if (user.userMetadata?['is_yb'] == true) role = 'Penaung';
     else if (user.userMetadata?['is_admin'] == true) role = 'Admin';
@@ -190,7 +194,7 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
     try {
       await Supabase.instance.client.from('admin_chats').insert({
         'message': text,
-        'sender_name': user.userMetadata?['full_name'] ?? 'Admin',
+        'sender_name': displayName,
         'sender_role': role,
         'user_id': user.id,
         'image_url': imageUrl,
@@ -201,7 +205,7 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
 
       // Hantar notifikasi kepada Admin/Moderator lain
       await _supabaseService.sendChatNotification(
-        senderName: user.userMetadata?['full_name'] ?? 'Seseorang',
+        senderName: displayName,
         message: imageUrl != null ? '📷 Menghantar gambar' : text,
         senderUserId: user.id,
       );
@@ -278,90 +282,99 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final currentUser = _authService.currentUser;
+    
+    // Gunakan View.of untuk mengesan keyboard secara tepat walaupun dalam nested scaffold
+    final bool isKeyboardVisible = View.of(context).viewInsets.bottom > 0;
 
     return Scaffold(
-      backgroundColor: isDarkMode ? AppTheme.darkBackground : const Color(0xFFFFF9C4), // Kuning lembut (Lemon Chiffon/Light Yellow)
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildGlassHeader(isDarkMode),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : Stack(
-                      children: [
-                        _messages.isEmpty
-                            ? const Center(child: Text('Tiada mesej lagi. Mula bersembang!'))
-                            : ListView.builder(
-                                controller: _scrollController,
-                                reverse: true,
-                                padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
-                                itemCount: _messages.length,
-                                itemBuilder: (context, index) {
-                                  final msg = _messages[index];
-                                  final bool isMe = msg['user_id'] == currentUser?.id;
-                                  
-                                  // Logik Paparan Tarikh
-                                  bool showDateHeader = false;
-                                  if (index == _messages.length - 1) {
+      // Elakkan resize berganda kerana MainNavigation sudah mengendalikannya
+      resizeToAvoidBottomInset: false,
+      backgroundColor: isDarkMode ? AppTheme.darkBackground : const Color(0xFFFFF9C4), // Kuning lembut
+      body: Column(
+        children: [
+          SizedBox(height: MediaQuery.of(context).padding.top + 110), // Padding untuk header global
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : Stack(
+                    children: [
+                      _messages.isEmpty
+                          ? const Center(child: Text('Tiada mesej lagi. Mula bersembang!'))
+                          : ListView.builder(
+                              controller: _scrollController,
+                              reverse: true,
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+                              itemCount: _messages.length,
+                              itemBuilder: (context, index) {
+                                final msg = _messages[index];
+                                final bool isMe = msg['user_id'] == currentUser?.id;
+                                
+                                // Logik Paparan Tarikh
+                                bool showDateHeader = false;
+                                if (index == _messages.length - 1) {
+                                  showDateHeader = true;
+                                } else {
+                                  final DateTime currentDate = DateTime.parse(msg['created_at']).toLocal();
+                                  final DateTime nextDate = DateTime.parse(_messages[index + 1]['created_at']).toLocal();
+                                  if (currentDate.day != nextDate.day || 
+                                      currentDate.month != nextDate.month || 
+                                      currentDate.year != nextDate.year) {
                                     showDateHeader = true;
-                                  } else {
-                                    final DateTime currentDate = DateTime.parse(msg['created_at']).toLocal();
-                                    final DateTime nextDate = DateTime.parse(_messages[index + 1]['created_at']).toLocal();
-                                    if (currentDate.day != nextDate.day || 
-                                        currentDate.month != nextDate.month || 
-                                        currentDate.year != nextDate.year) {
-                                      showDateHeader = true;
-                                    }
                                   }
+                                }
 
-                                  return Column(
-                                    children: [
-                                      if (showDateHeader) _buildDateHeader(msg['created_at'], isDarkMode),
-                                      _buildChatBubble(msg, isMe, isDarkMode),
-                                    ],
-                                  );
-                                },
-                              ),
-                        if (_typingUsers.isNotEmpty)
-                          Positioned(
-                            bottom: 8,
-                            left: 20,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: isDarkMode ? Colors.black54 : Colors.white70,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                children: [
-                                  SizedBox(
-                                    width: 12,
-                                    height: 12,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 1.5,
-                                      valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryRed.withOpacity(0.5)),
-                                    ),
+                                return Column(
+                                  children: [
+                                    if (showDateHeader) _buildDateHeader(msg['created_at'], isDarkMode),
+                                    _buildChatBubble(msg, isMe, isDarkMode),
+                                  ],
+                                );
+                              },
+                            ),
+                      if (_typingUsers.isNotEmpty)
+                        Positioned(
+                          bottom: 8,
+                          left: 20,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isDarkMode ? Colors.black54 : Colors.white70,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.5,
+                                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryRed.withOpacity(0.5)),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    "${_typingUsers.join(', ')} sedang menaip...",
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontStyle: FontStyle.italic,
-                                      color: isDarkMode ? Colors.white70 : Colors.black54,
-                                    ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  "${_typingUsers.join(', ')} sedang menaip...",
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontStyle: FontStyle.italic,
+                                    color: isDarkMode ? Colors.white70 : Colors.black54,
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
-                      ],
-                    ),
-            ),
-            _buildMessageInput(isDarkMode),
-          ],
-        ),
+                        ),
+                    ],
+                  ),
+          ),
+          _buildMessageInput(isDarkMode),
+          // Hanya tunjukkan padding bawah 100px jika keyboard TIDAK kelihatan
+          if (!isKeyboardVisible)
+            const SizedBox(height: 100),
+          // Jika keyboard kelihatan, kita tambah sedikit padding bawah untuk mengelakkan bar input rapat sangat dengan keyboard
+          if (isKeyboardVisible)
+            SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
+        ],
       ),
     );
   }
@@ -406,81 +419,6 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
     );
   }
 
-  Widget _buildGlassHeader(bool isDarkMode) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.05),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: (isDarkMode ? Colors.white : Colors.black).withOpacity(0.1)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: isDarkMode ? Colors.white.withOpacity(0.1) : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      )
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.asset(
-                      'assets/images/app_icon.png',
-                      width: 32,
-                      height: 32,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.report_problem),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Row(
-                    children: [
-                      Text(
-                        'ChatRoom',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: isDarkMode ? Colors.white : Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          'For Admin & Moderator Only',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.red,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildChatBubble(Map<String, dynamic> msg, bool isMe, bool isDarkMode) {
     final bool isDeleted = msg['is_deleted'] == true;

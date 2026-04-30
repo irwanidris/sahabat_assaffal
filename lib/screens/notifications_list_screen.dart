@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import '../services/supabase_service.dart';
 import '../services/auth_service.dart';
 import '../models/notification_model.dart';
 import '../theme/app_theme.dart';
+import '../main.dart';
+import '../cubit/reports_cubit.dart';
 
 class NotificationsListScreen extends StatefulWidget {
   const NotificationsListScreen({super.key});
@@ -45,11 +48,77 @@ class _NotificationsListScreenState extends State<NotificationsListScreen> {
     }
   }
 
-  Future<void> _markAsRead(NotificationModel notification) async {
-    if (notification.isRead) return;
-    
-    await _supabaseService.markNotificationAsRead(notification.id);
-    _loadNotifications();
+  Future<void> _handleNotificationTap(NotificationModel notification) async {
+    // 1. Tanda sebagai baca
+    if (!notification.isRead) {
+      await _supabaseService.markNotificationAsRead(notification.id);
+      if (mounted) {
+        setState(() {
+          final index = _notifications.indexWhere((n) => n.id == notification.id);
+          if (index != -1) {
+            _notifications[index] = NotificationModel(
+              id: notification.id,
+              title: notification.title,
+              message: notification.message,
+              createdAt: notification.createdAt,
+              isRead: true,
+              type: notification.type,
+              relatedId: notification.relatedId,
+            );
+          }
+        });
+      }
+    }
+
+    // 2. Navigasi mengikut jenis
+    final String type = notification.type?.toLowerCase() ?? '';
+    final String? relatedId = notification.relatedId;
+
+    if (relatedId == null || relatedId.isEmpty) return;
+
+    if (type.contains('report') || type.contains('new_report')) {
+      _navigateToReport(relatedId);
+    } else if (type.contains('news')) {
+      _navigateToNews();
+    }
+  }
+
+  void _navigateToReport(String reportId) {
+    // Tunjukkan loading sekejap
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    // Pastikan reports dimuatkan dahulu
+    context.read<ReportsCubit>().loadReports().then((_) {
+      if (mounted) {
+        Navigator.pop(context); // Tutup loading dialog
+        
+        final state = context.read<ReportsCubit>().state;
+        if (state is ReportsLoaded) {
+          try {
+            final report = state.reports.firstWhere(
+              (r) => r.id.toString() == reportId.toString() || r.reportCode == reportId,
+            );
+            
+            // Tutup screen notifikasi dan lompat ke tab laporan
+            Navigator.pop(context);
+            mainNavKey.currentState?.jumpToReport(report);
+          } catch (e) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Laporan tidak dijumpai atau telah dipadam.')),
+            );
+          }
+        }
+      }
+    });
+  }
+
+  void _navigateToNews() {
+    Navigator.pop(context);
+    mainNavKey.currentState?.jumpToNews();
   }
 
   Future<void> _markAllAsRead() async {
@@ -131,7 +200,7 @@ class _NotificationsListScreenState extends State<NotificationsListScreen> {
     }
 
     return InkWell(
-      onTap: () => _markAsRead(notification),
+      onTap: () => _handleNotificationTap(notification),
       child: Container(
         color: notification.isRead 
             ? Colors.transparent 
@@ -166,15 +235,14 @@ class _NotificationsListScreenState extends State<NotificationsListScreen> {
                           ),
                         ),
                       ),
-                      if (!notification.isRead)
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: AppTheme.primaryRed,
-                            shape: BoxShape.circle,
-                          ),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: notification.isRead ? Colors.grey.withOpacity(0.5) : AppTheme.primaryRed,
+                          shape: BoxShape.circle,
                         ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 4),

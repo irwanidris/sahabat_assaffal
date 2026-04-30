@@ -36,11 +36,10 @@ class CommunityService {
           'include_player_ids': [targetPushId],
           'headings': {'en': title},
           'contents': {'en': message},
-          'android_accent_color': 'FF0000',
+          'android_accent_color': 'FFE53935',
           'small_icon': 'ic_stat_onesignal_default',
-          // TAMBAH BUNYI CUSTOM DI SINI
-          'android_sound': 'assaffal_sound', // Nama fail tanpa .mp3
-          'ios_sound': 'assaffal_sound.wav', // Nama fail dengan extension
+          'android_sound': 'assaffal_sound',
+          'ios_sound': 'assaffal_sound.wav',
         }),
       );
     } catch (e) {

@@ -58,7 +58,11 @@ class AuthService {
         } else {
           OneSignal.User.removeTag("role");
         }
-        // Sentiasa set user_id tag untuk mengelakkan notifikasi diri sendiri
+        
+        // Login OneSignal dengan User ID (External ID)
+        OneSignal.login(user.id);
+        
+        // Sentiasa set user_id tag (optional but good for filtering)
         OneSignal.User.addTagWithKey("user_id", user.id);
       }
     } catch (e) {
@@ -105,6 +109,7 @@ class AuthService {
       await _supabase.auth.signOut();
       await _googleSignIn.signOut();
       OneSignal.User.removeTag("role");
+      OneSignal.logout();
     } catch (e) {
       debugPrint('Error Sign Out: $e');
     }
