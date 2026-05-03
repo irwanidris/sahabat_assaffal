@@ -5,44 +5,43 @@ import '../theme/app_theme.dart';
 import '../services/device_service.dart';
 import '../main.dart';
 
-class NicknameSetupScreen extends StatefulWidget {
+class UsernameSetupScreen extends StatefulWidget {
   final bool isPreview;
-  const NicknameSetupScreen({super.key, this.isPreview = false});
+  const UsernameSetupScreen({super.key, this.isPreview = false});
 
   @override
-  State<NicknameSetupScreen> createState() => _NicknameSetupScreenState();
+  State<UsernameSetupScreen> createState() => _UsernameSetupScreenState();
 }
 
-class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
-  final TextEditingController _nicknameController = TextEditingController();
+class _UsernameSetupScreenState extends State<UsernameSetupScreen> {
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _referrerController = TextEditingController();
-  
+
   late int _currentStep;
   bool _isLoading = false;
   String? _errorText;
-  String _savedNickname = '';
+  String _savedUsername = '';
 
   @override
   void initState() {
     super.initState();
-    // Kosongkan cache profil lama sebaik skrin dibuka untuk elak ralat data stale
     DeviceService().clearCache();
     _currentStep = widget.isPreview ? 2 : 0;
     if (widget.isPreview) {
-      _savedNickname = 'Admin Preview';
+      _savedUsername = 'Admin Preview';
     }
   }
 
-  // Step 1: Simpan Nickname Utama
+  // LANGKAH 1: Simpan Username
   Future<void> _proceedToReferrer() async {
-    final nickname = _nicknameController.text.trim();
-    if (nickname.isEmpty) {
-      setState(() => _errorText = 'Sila masukkan nickname');
+    final username = _usernameController.text.trim();
+    if (username.isEmpty) {
+      setState(() => _errorText = 'Sila masukkan username');
       return;
     }
 
-    if (nickname.length < 3) {
-      setState(() => _errorText = 'Nickname terlalu pendek (min 3 aksara)');
+    if (username.length < 3) {
+      setState(() => _errorText = 'Username terlalu pendek (min 3 aksara)');
       return;
     }
 
@@ -55,67 +54,54 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
       final supabase = Supabase.instance.client;
       final user = supabase.auth.currentUser;
       final deviceService = DeviceService();
-      final deviceId = await deviceService.getDeviceId();
 
       if (user != null) {
-        // 1. Semak keunikan Nickname dalam device_users
         final existing = await supabase
-            .from('device_users')
+            .from('profiles')
             .select('id')
-            .eq('nickname', nickname)
+            .eq('username', username)
             .maybeSingle();
 
         if (existing != null) {
           setState(() {
-            _errorText = 'Nickname ini sudah digunakan. Sila pilih yang lain.';
+            _errorText = 'Username ini sudah digunakan. Sila pilih yang lain.';
             _isLoading = false;
           });
           return;
         }
 
-        // 2. Dapatkan atau Cipta Profil
-        final profile = await deviceService.getOrCreateProfile();
-        
-        if (profile['id'] == null) {
-          throw 'Profil pengguna tidak sah. Sila cuba log masuk semula.';
-        }
-
-        // 3. Kemaskini Nickname dalam device_users
-        await supabase.from('device_users').update({
-          'nickname': nickname,
-          'user_id': user.id, 
-          'nickname_changed_at': DateTime.now().toIso8601String(), 
-          'nickname_change_count': 1, 
+        await supabase.from('profiles').upsert({
+          'id': user.id,
+          'username': username,
           'updated_at': DateTime.now().toIso8601String(),
-        }).eq('id', profile['id']);
+        });
 
-        // 4. Kosongkan cache supaya data baru tersedia secara lokal
         deviceService.clearCache();
 
         setState(() {
-          _savedNickname = nickname;
+          _savedUsername = username;
           _currentStep = 1;
           _isLoading = false;
         });
       }
     } catch (e) {
       setState(() {
-        _errorText = 'Gagal menyimpan nickname: $e';
+        _errorText = 'Gagal menyimpan username: $e';
         _isLoading = false;
       });
     }
   }
 
-  // Step 2: Proses Referrer
+  // LANGKAH 2: Proses Referrer
   Future<void> _submitReferrer({bool skip = false}) async {
     if (skip) {
       setState(() => _currentStep = 2);
       return;
     }
 
-    final referrerNickname = _referrerController.text.trim();
-    if (referrerNickname.isEmpty) {
-      setState(() => _errorText = 'Sila masukkan nickname rakan atau Langkau');
+    final referrerUsername = _referrerController.text.trim();
+    if (referrerUsername.isEmpty) {
+      setState(() => _errorText = 'Sila masukkan username rakan atau Langkau');
       return;
     }
 
@@ -126,7 +112,7 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
 
     try {
       final deviceService = DeviceService();
-      final error = await deviceService.processReferral(referrerNickname);
+      final error = await deviceService.processReferral(referrerUsername);
 
       if (error == null) {
         setState(() {
@@ -151,39 +137,50 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: isDarkMode 
-                  ? [const Color(0xFF1a1a2e), const Color(0xFF16213e)]
-                  : [Colors.white, Colors.blue.shade50],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sila lengkapkan profil anda untuk meneruskan.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: isDarkMode
+                      ? [const Color(0xFF1a1a2e), const Color(0xFF16213e)]
+                      : [Colors.white, Colors.blue.shade50],
+                ),
               ),
             ),
-          ),
-          SafeArea(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 500),
-              child: _buildCurrentStep(isDarkMode),
+            SafeArea(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 500),
+                child: _buildCurrentStep(isDarkMode),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildCurrentStep(bool isDarkMode) {
-    if (_currentStep == 0) return _buildNicknameStep(isDarkMode);
+    if (_currentStep == 0) return _buildUsernameStep(isDarkMode);
     if (_currentStep == 1) return _buildReferrerStep(isDarkMode);
     return _buildRewardView(isDarkMode);
   }
 
-  // LANGKAH 1: INPUT NICKNAME
-  Widget _buildNicknameStep(bool isDarkMode) {
+  Widget _buildUsernameStep(bool isDarkMode) {
     return Padding(
       key: const ValueKey('step0'),
       padding: const EdgeInsets.symmetric(horizontal: 30),
@@ -194,19 +191,15 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
           const SizedBox(height: 40),
           const Text('Satu Langkah Lagi!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
-          const Text('Hi! Boleh kami tahu nama panggilan kamu?', textAlign: TextAlign.center, style: TextStyle(fontSize: 18)),
+          const Text('Hi! Boleh kami tahu username pilihan kamu?', textAlign: TextAlign.center, style: TextStyle(fontSize: 18)),
           const SizedBox(height: 20),
-          
-          _buildTextField(_nicknameController, 'Masukkan Nickname...', Icons.alternate_email_rounded, isDarkMode),
-          
+          _buildTextField(_usernameController, 'Masukkan Username...', Icons.alternate_email_rounded, isDarkMode),
           const SizedBox(height: 12),
           const Text(
-            'Nota: Sila pilih dengan bijak. Nickname ini adalah identiti utama anda.',
+            'Nota: Sila pilih dengan bijak. Username ini adalah identiti utama anda.',
             style: TextStyle(fontSize: 12, color: Colors.amber, fontWeight: FontWeight.bold),
           ),
-          
           if (_errorText != null) _buildErrorDisplay(),
-          
           const SizedBox(height: 40),
           _buildActionButton('SETERUSNYA', _proceedToReferrer),
         ],
@@ -214,7 +207,6 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
     );
   }
 
-  // LANGKAH 2: INPUT REFERRER
   Widget _buildReferrerStep(bool isDarkMode) {
     return Padding(
       key: const ValueKey('step1'),
@@ -225,27 +217,18 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
           _buildIconHeader(Icons.group_add_rounded),
           const SizedBox(height: 40),
           const Text(
-            'Satu lagi...', 
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.primaryRed)
+              'Satu lagi...',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.primaryRed)
           ),
           const SizedBox(height: 10),
           const Text(
-            'Siapa yang kenalkan kamu dengan Aplikasi ini? Kamu bakal terima +95 untuk isi nickname dia dibawah.',
+            'Siapa yang kenalkan kamu dengan Aplikasi ini? Kamu bakal terima +95 mata jika isi username dia dibawah.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'Nota: Tanpa rakan rujukan, anda hanya akan menerima 30 mata pendaftaran.',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
-          ),
           const SizedBox(height: 30),
-          
-          _buildTextField(_referrerController, 'Nickname Rakan...', Icons.person_search_rounded, isDarkMode),
-          
+          _buildTextField(_referrerController, 'Username Rakan...', Icons.person_search_rounded, isDarkMode),
           if (_errorText != null) _buildErrorDisplay(),
-          
           const SizedBox(height: 40),
           Row(
             children: [
@@ -266,7 +249,6 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
     );
   }
 
-  // LANGKAH 3: REWARD VIEW
   Widget _buildRewardView(bool isDarkMode) {
     return Padding(
       key: const ValueKey('step2'),
@@ -276,10 +258,7 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
         children: [
           _buildLargeMedal(),
           const SizedBox(height: 30),
-          const Text(
-            'Tahniah!',
-            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-          ),
+          const Text('Tahniah!', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
           const SizedBox(height: 15),
           const Text(
             'Selamat Datang dan bersama kita majukan Tungku.',
@@ -290,14 +269,13 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
           _buildActionButton('SELAMAT BERKONGSI', () async {
             setState(() => _isLoading = true);
             try {
-              // HANYA DI SINI kita kemaskini metadata untuk 'lepaskan' user ke skrin utama
               await Supabase.instance.client.auth.updateUser(
-                UserAttributes(data: {'nickname': _savedNickname}),
+                UserAttributes(data: {'username': _savedUsername}),
               );
               if (mounted) {
                 Navigator.of(context).pushAndRemoveUntil(
                   MaterialPageRoute(builder: (context) => const MainNavigation(initialIndex: 4)),
-                  (route) => false,
+                      (route) => false,
                 );
               }
             } catch (e) {
@@ -309,7 +287,7 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
     );
   }
 
-  // HELPER WIDGETS
+  // --- HELPER WIDGETS ---
   Widget _buildIconHeader(IconData icon) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -356,9 +334,9 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
-        child: _isLoading 
-          ? const CircularProgressIndicator(color: Colors.white) 
-          : Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        child: _isLoading
+            ? const CircularProgressIndicator(color: Colors.white)
+            : Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
       ),
     );
   }

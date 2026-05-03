@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:ui';
+import 'dart:io'; // Tambah Import[cite: 1]
 import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
 import '../services/auth_service.dart';
 import '../services/device_service.dart';
 import '../theme/app_theme.dart';
+import 'ic_capture_screen.dart'; // Import skrin AI[cite: 1]
 
 class VerificationApplicationScreen extends StatefulWidget {
   const VerificationApplicationScreen({super.key});
@@ -31,6 +33,10 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
   int _totalExistsVerifications = 0;
   bool _isEligible = false;
 
+  // Variable dokumen IC
+  File? _icFront; // Tambah Variable[cite: 1]
+  File? _icBack;  // Tambah Variable[cite: 1]
+
   final SupabaseService _supabaseService = SupabaseService();
   final AuthService _authService = AuthService();
   final DeviceService _deviceService = DeviceService();
@@ -50,7 +56,6 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
         _totalVerifications = profile['total_verifications'] ?? 0;
         _totalExistsVerifications = profile['total_exists_verifications'] ?? 0;
 
-        // Syarat: Salah satu dari 3 mesti dipenuhi
         _isEligible = _totalReports >= 3 ||
             _totalVerifications >= 6 ||
             _totalExistsVerifications >= 10;
@@ -63,7 +68,21 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
     }
   }
 
-  // --- Fungsi Logik (OTP & Submit) ---
+  // 2. Logik Pengambilan Gambar IC[cite: 1]
+  Future<void> _captureIC(String side) async {
+    final File? result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => ICCaptureScreen(side: side)),
+    );
+
+    if (result != null) {
+      setState(() {
+        if (side == 'DEPAN') _icFront = result;
+        else _icBack = result;
+      });
+    }
+  }
+
   Future<void> _sendOTP() async {
     if (_phoneController.text.length < 10) return;
     setState(() => _isLoading = true);
@@ -81,8 +100,53 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
     } catch (e) { setState(() => _isLoading = false); }
   }
 
+  void _showSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.verified_user_rounded, color: Colors.green, size: 70),
+            const SizedBox(height: 20),
+            const Text(
+                'Permohonan STATUS VERIFIED Dihantar',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Permohonan anda akan disemak oleh pihak pentadbir.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.pop(context, true);
+                },
+                child: const Text('TERIMA KASIH', style: TextStyle(color: Colors.white)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _submitRequest() async {
-    if (!_formKey.currentState!.validate() || !_phoneVerified) return;
+    // Pastikan form sah, telefon sah, dan kedua-dua gambar IC ada
+    if (!_formKey.currentState!.validate() || !_phoneVerified || _icFront == null || _icBack == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sila lengkapkan semua maklumat dan dokumen IC.')));
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       await _supabaseService.submitVerificationRequest(
@@ -90,40 +154,51 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
         icNumber: _icController.text.trim(),
         address: _addressController.text.trim(),
         phoneNumber: _phoneController.text.trim(),
+        icFront: _icFront!, // Hantar fail depan
+        icBack: _icBack!,   // Hantar fail belakang
       );
-      if (mounted) Navigator.pop(context, true);
-    } catch (e) { setState(() => _isLoading = false); }
+
+      setState(() => _isLoading = false);
+      if (mounted) _showSuccessDialog();
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ralat: $e'), backgroundColor: Colors.red));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Permohonan Verified User'),
+        title: const Text('Borang STATUS VERIFIED'),
         backgroundColor: AppTheme.primaryRed,
-        foregroundColor: Colors.white,
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
         child: Column(
           children: [
-            // 1. Bahagian Progress (Sentiasa Boleh Dilihat)
             _buildProgressHeader(),
-
-            // 2. Bahagian Borang (Berpantul Kaca jika tidak layak)
             Stack(
               children: [
-                // Borang Asal
                 Padding(
                   padding: const EdgeInsets.all(24),
-                  child: _buildMainForm(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Permohonan STATUS VERIFIED (Rasmi)',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 20),
+                      _buildMainForm(),
+                    ],
+                  ),
                 ),
 
-                // Efek Kaca (Overlay) jika TIDAK LAYAK
                 if (!_isEligible)
                   Positioned.fill(
-                    child: AbsorbPointer( // Menghalang sentuhan
+                    child: AbsorbPointer(
                       child: ClipRect(
                         child: BackdropFilter(
                           filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
@@ -142,13 +217,13 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(Icons.lock_outline, color: Colors.orange, size: 40),
-                                    SizedBox(height: 12),
-                                    Text(
+                                    const SizedBox(height: 12),
+                                    const Text(
                                       'Borang Dikunci',
                                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                                     ),
-                                    SizedBox(height: 8),
-                                    Text(
+                                    const SizedBox(height: 8),
+                                    const Text(
                                       'Sila penuhi salah satu kriteria di atas untuk mengaktifkan borang ini.',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(fontSize: 12, color: Colors.grey),
@@ -238,6 +313,33 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
             decoration: const InputDecoration(labelText: 'Alamat Tetap', border: OutlineInputBorder()),
             maxLines: 2,
           ),
+
+          // 3. UI Butang & Preview IC[cite: 1]
+          const SizedBox(height: 30),
+          const Text('Dokumen Sokongan (IC)', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 15),
+          Row(
+            children: [
+              // Bahagian DEPAN
+              Expanded(
+                child: _buildICButton(
+                  label: 'BAHAGIAN DEPAN',
+                  file: _icFront,
+                  onTap: () => _captureIC('DEPAN'),
+                ),
+              ),
+              const SizedBox(width: 15),
+              // Bahagian BELAKANG
+              Expanded(
+                child: _buildICButton(
+                  label: 'BAHAGIAN BELAKANG',
+                  file: _icBack,
+                  onTap: () => _captureIC('BELAKANG'),
+                ),
+              ),
+            ],
+          ),
+
           const SizedBox(height: 30),
           const Text('Pengesahan Telefon', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
@@ -265,12 +367,51 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
             width: double.infinity,
             height: 50,
             child: ElevatedButton(
-              onPressed: _phoneVerified ? _submitRequest : null,
+              // 5. Butang SUBMIT hanya aktif jika IC ada[cite: 1]
+              onPressed: (_phoneVerified && _icFront != null && _icBack != null) ? _submitRequest : null,
               style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryRed),
               child: const Text('HANTAR PERMOHONAN', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // 4. Helper Widget _buildICButton[cite: 1]
+  Widget _buildICButton({required String label, File? file, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: file != null ? Colors.green : Colors.grey.shade300),
+        ),
+        child: file != null
+            ? ClipRRect(
+          borderRadius: BorderRadius.circular(11),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.file(file, fit: BoxFit.cover),
+              const Positioned(
+                top: 5,
+                right: 5,
+                child: Icon(Icons.check_circle, color: Colors.green, size: 24),
+              ),
+            ],
+          ),
+        )
+            : Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.add_a_photo_outlined, color: Colors.grey, size: 30),
+            const SizedBox(height: 8),
+            Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          ],
+        ),
       ),
     );
   }

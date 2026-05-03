@@ -44,7 +44,7 @@ class FullScreenImage extends StatelessWidget {
                             placeholder: (context, url) => const CircularProgressIndicator(color: Colors.white),
                             errorWidget: (context, url, error) => const Icon(Icons.error, color: Colors.white),
                           ),
-                    if (report != null) _buildWatermark(),
+
                   ],
                 ),
               ),
@@ -74,29 +74,20 @@ class FullScreenImage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Logo Tengah
-            Opacity(
-              opacity: 0.7,
-              child: Image.asset(
-                'assets/images/logo_s_assaffal.png',
-                width: 80,
-                errorBuilder: (context, error, stackTrace) => const SizedBox(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            // Tarikh & Masa
+            // KITA BUANG LOGO DI SINI SUPAYA TIDAK BERTINDAN DENGAN LOGO ASAL GAMBAR
+            const SizedBox(height: 100), // Beri ruang untuk logo yang sedia ada dalam gambar
+
+            // KEKALKAN SEMUA TEKS INI DI TENGAH
             _buildWatermarkText(
               DateFormat('dd/MM/yyyy HH:mm:ss').format(report!.createdAtMYT),
               fontSize: 14,
             ),
             const SizedBox(height: 4),
-            // Coordinates
             _buildWatermarkText(
               report!.coordinates,
               fontSize: 12,
             ),
             const SizedBox(height: 4),
-            // Nickname
             _buildWatermarkText(
               'Oleh: ${report!.nickname ?? 'Tanpa Nama'}',
               fontSize: 12,

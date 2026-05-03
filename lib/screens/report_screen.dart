@@ -197,7 +197,7 @@ class _ReportScreenState extends State<ReportScreen> with SingleTickerProviderSt
             ),
 
             if (showAkanDatang) ...[
-              SizedBox(height: MediaQuery.of(context).size.height * 0.15),
+              const SizedBox(height: 20),
               const Icon(Icons.verified_user_outlined, size: 80, color: Colors.green),
               const SizedBox(height: 20),
               const Text(
@@ -559,15 +559,11 @@ class _ReportScreenState extends State<ReportScreen> with SingleTickerProviderSt
       final String coords = "${_location!.latitude.toStringAsFixed(4)}, ${_location!.longitude.toStringAsFixed(4)}";
       final String dateTime = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
 
-      // 1. Upload Images with metadata for watermark
+      // 1. Upload Images
       List<String> uploadedUrls = [];
       for (var image in _images) {
-        final url = await _supabaseService.uploadImage(
-          image,
-          nickname: nickname,
-          coords: coords,
-          dateTime: dateTime,
-        );
+        // Panggil uploadImage tanpa sebarang parameter tambahan
+        final url = await _supabaseService.uploadImage(image);
         uploadedUrls.add(url);
       }
       final imageUrlsString = uploadedUrls.join(',');
@@ -581,11 +577,11 @@ class _ReportScreenState extends State<ReportScreen> with SingleTickerProviderSt
         areaName: _areaNameController.text.isEmpty ? 'Kawasan Tidak Dinyatakan' : _areaNameController.text,
         duration: _dateTimeController.text.isEmpty ? 'Baru' : _dateTimeController.text,
         description: _descriptionController.text,
-        deviceId: deviceId,
+        // deviceId: deviceId, <--- Baris ini telah dipadam
         userId: user?.id,
         severity: _detectedSeverity,
         category: _category,
-        reporterName: nickname, // Gunakan Nickname di sini
+        reporterName: nickname,
         reporterContact: _reporterContactController.text,
       );
 

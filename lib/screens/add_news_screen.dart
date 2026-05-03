@@ -63,7 +63,7 @@ class _AddNewsScreenState extends State<AddNewsScreen> {
     try {
       String? imageUrl = _existingImageUrl;
       if (_selectedImage != null) {
-        imageUrl = await _supabaseService.uploadImage(_selectedImage!, applyWatermark: false);
+        imageUrl = await _supabaseService.uploadImage(_selectedImage!);
       }
 
       if (widget.newsToEdit != null) {
