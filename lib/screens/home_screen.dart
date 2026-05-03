@@ -21,6 +21,8 @@ import '../services/supabase_service.dart';
 import '../services/auth_service.dart';
 import '../services/share_service.dart';
 import '../services/community_service.dart';
+import '../services/device_service.dart';
+
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -35,7 +37,10 @@ class _HomeScreenState extends State<HomeScreen> {
   final SupabaseService _supabaseService = SupabaseService();
   final ShareService _shareService = ShareService();
   final CommunityService _communityService = CommunityService();
-  
+  final DeviceService _deviceService = DeviceService();
+  String? _userAvatar;
+
+
   LatLng? _currentLocation;
   StreamSubscription<Position>? _positionStream;
   String _selectedFilter = 'Semua';
@@ -49,8 +54,30 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _initDeviceId();
     _initLocationTracking();
+    _loadUserAvatar(); // Tambah ini
     context.read<ReportsCubit>().loadReports();
   }
+
+  Future<void> _loadUserAvatar() async {
+    // 1. Ambil dari Profile Database
+    final profile = await _deviceService.getOrCreateProfile();
+    String? avatar = profile['avatar_url'];
+
+    // 2. Jika Database kosong, cuba ambil terus dari Metadata Google
+    if (avatar == null || avatar.isEmpty) {
+      final user = _authService.currentUser;
+      avatar = user?.userMetadata?['avatar_url'] ??
+          user?.userMetadata?['picture'] ??
+          user?.userMetadata?['google_avatar_url'];
+    }
+
+    if (mounted) {
+      setState(() {
+        _userAvatar = avatar;
+      });
+    }
+  }
+
 
   @override
   void dispose() {
@@ -159,22 +186,49 @@ class _HomeScreenState extends State<HomeScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                   boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
                                 ),
-                                child: const Text('Anda Disini', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue)),
+                                child: const Text('Anda Disini', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.primaryRed)),
                               ),
-                              const Icon(Icons.location_history, color: Colors.blue, size: 35),
+                              const SizedBox(height: 4),
+                              // Bahagian Avatar
+                              Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2),
+                                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                                ),
+                                child: CircleAvatar(
+                                  radius: 18,
+                                  backgroundColor: AppTheme.primaryRed,
+                                  backgroundImage: (_userAvatar != null && _userAvatar!.isNotEmpty)
+                                      ? NetworkImage(_userAvatar!)
+                                      : null,
+                                  child: (_userAvatar == null || _userAvatar!.isEmpty)
+                                      ? const Icon(Icons.person, color: Colors.white, size: 20)
+                                      : null,
+                                ),
+                              ),
                             ],
                           ),
                         ),
                       ...reports.map((report) => Marker(
                         point: LatLng(report.latitude, report.longitude),
-                        width: 40,
-                        height: 40,
+                        width: 18,
+                        height: 18,
                         child: GestureDetector(
                           onTap: () => _showReportDetails(report),
-                          child: Icon(
-                            Icons.location_on,
-                            color: _getMarkerColor(report),
-                            size: 40,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: _getMarkerColor(report),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Colors.black26,
+                                  blurRadius: 4,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       )),
@@ -404,12 +458,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Color _getStatusColor(String status) {
     switch (status.toLowerCase()) {
       case 'resolved':
-        return Colors.green;
+        return Colors.green;    // HIJAU (Selesai)
       case 'active':
       case 'processing':
-        return Colors.red;
+        return Colors.red;      // MERAH (Awas/Aktif)
       case 'pending':
-        return Colors.orange;
+        return Colors.orange;   // JINGGA (Belum Sah)
       default:
         return Colors.orange;
     }

@@ -14,7 +14,7 @@ import 'screens/splash_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/report_screen.dart';
 import 'screens/city_dashboard_screen.dart';
-import 'screens/nickname_setup_screen.dart';
+import 'screens/username_setup_screen.dart';
 import 'screens/admin_chat_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/reports_list_screen.dart';
@@ -140,7 +140,7 @@ class MyApp extends StatelessWidget {
             themeMode: themeState.themeMode,
             routes: {
               '/home': (context) => const MainNavigation(),
-              '/nickname_setup': (context) => NicknameSetupScreen(),
+              '/nickname_setup': (context) => UsernameSetupScreen(),
             },
             home: const AppWrapper(),
           );
@@ -168,13 +168,23 @@ class _AppWrapperState extends State<AppWrapper> {
       builder: (context, snapshot) {
         final session = snapshot.data?.session;
         final user = session?.user;
+
         if (user != null) {
-          final nickname = user.userMetadata?['nickname'];
-          if (nickname != null && nickname.toString().isNotEmpty) {
-            return MainNavigation(key: mainNavKey);
+          // 1. Semak jika pengguna sudah mendaftar username
+          // Kita guna metadata 'username' yang diset semasa pendaftaran
+          final String? username = user.userMetadata?['username'];
+
+          if (username == null || username.isEmpty) {
+            // 2. Jika login Google berjaya tapi belum ada username,
+            // hantar ke skrin Setup yang baru anda buat
+            return const UsernameSetupScreen();
           }
-          return NicknameSetupScreen();
+
+          // 3. Jika sudah ada username, terus ke apps utama
+          return MainNavigation(key: mainNavKey);
         }
+
+        // 4. Jika tidak login Google (Pelawat), terus ke apps utama
         return MainNavigation(key: mainNavKey);
       },
     );

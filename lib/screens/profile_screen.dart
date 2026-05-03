@@ -39,7 +39,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Map<String, dynamic> _personalStats = {};
   List<AssaffalReport> _userReports = [];
 
-  final TextEditingController _nickCtrl = TextEditingController();
+  final TextEditingController _userCtrl = TextEditingController(); // Tukar dari _nickCtrl
   final TextEditingController _phoneCtrl = TextEditingController();
 
   bool _isAdmin = false, _isModerator = false, _isYB = false, _isVerified = false;
@@ -59,7 +59,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void dispose() {
     _authSubscription?.cancel();
-    _nickCtrl.dispose();
+    _userCtrl.dispose();
     _phoneCtrl.dispose();
     super.dispose();
   }
@@ -85,7 +85,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           _profileData = {
             'full_name': _isYB ? 'Assaffal Hj Panglima Alian' : (user.userMetadata?['full_name'] ?? 'Pengguna'),
-            'nickname': profile['nickname'] ?? 'Sahabat',
+            'username': profile['username'] ?? 'Sahabat', // Guna username
             'avatar_url': user.userMetadata?['avatar_url'] ?? user.userMetadata?['picture'] ?? '',
             'phone': user.userMetadata?['phone'] ?? '-',
             'fb': user.userMetadata?['fb'] ?? '-',
@@ -94,7 +94,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             'yt': user.userMetadata?['yt'] ?? '-',
           };
 
-          _nickCtrl.text = _profileData?['nickname'] ?? '';
+          _userCtrl.text = _profileData?['username'] ?? '';
           _phoneCtrl.text = _profileData?['phone'] ?? '';
         });
       }
@@ -146,7 +146,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               children: [
                                 const SizedBox(height: 24),
                                 _buildSocialSection(isDarkMode),
-                                // Bahagian impak, verifikasi, laporan, dan log keluar telah dipadamkan/disembunyikan untuk minimalis[cite: 5]
                               ],
                             ),
                           ),
@@ -223,6 +222,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const SizedBox(height: 16),
         Text(_profileData?['full_name'] ?? 'Pengguna', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         _buildRoleLabel(),
+        // Paparan Username di bawah Full Name
+        Text('@${_profileData?['username'] ?? 'username'}', style: const TextStyle(fontSize: 14, color: Colors.grey)),
         const SizedBox(height: 16),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -314,13 +315,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [const Icon(Icons.shield, color: Colors.green, size: 24), const SizedBox(width: 10), const Text('Kelayakan Verified User', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))]),
+          Row(children: [
+            const Icon(Icons.shield, color: Colors.green, size: 24),
+            const SizedBox(width: 10),
+            const Text('Kelayakan STATUS VERIFIED', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))
+          ]),
           const SizedBox(height: 16),
           _buildProgressBar('Laporan Lubang', _totalReports, 3, Colors.red),
           _buildProgressBar('Undian Sahkan', _totalVerifications, 6, Colors.blue),
           _buildProgressBar('Pantauan Merah', _totalExistsVerifications, 10, AppTheme.primaryRed),
+          const SizedBox(height: 8),
+          const Text(
+            '*Lapor 3 lubang, undi 6 kali, ATAU pantau 10 lubang merah (VERIFIED Pantauan).',
+            style: TextStyle(fontSize: 10, color: Colors.grey, fontStyle: FontStyle.italic),
+          ),
           const SizedBox(height: 12),
-          SizedBox(width: double.infinity, child: ElevatedButton(onPressed: isEligible ? () => _navigateToVerificationForm() : null, style: ElevatedButton.styleFrom(backgroundColor: isEligible ? Colors.blue : Colors.grey.shade300), child: Text(isEligible ? 'MOHON SEKARANG' : 'BELUM LAYAK', style: TextStyle(color: isEligible ? Colors.white : Colors.grey)))),
+          SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                  onPressed: isEligible ? () => _navigateToVerificationForm() : null,
+                  style: ElevatedButton.styleFrom(backgroundColor: isEligible ? Colors.blue : Colors.grey.shade300),
+                  child: Text(
+                    isEligible ? 'MOHON STATUS VERIFIED' : 'BELUM LAYAK VERIFIED',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: isEligible ? Colors.white : Colors.grey.shade600
+                    ),
+                  )
+              )
+          ),
         ],
       ),
     );
@@ -345,33 +368,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20), border: Border.all(color: color.withOpacity(0.3))), child: Row(mainAxisSize: MainAxisSize.min, children: [Text(platform, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), Text(username, style: const TextStyle(fontSize: 12))]));
   }
 
-  Widget _buildReportsSection(bool isDarkMode) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Laporan Saya', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), TextButton(onPressed: _navigateToMyReports, child: const Text('Lihat Semua'))]),
-        const SizedBox(height: 12),
-        _buildReportsList(isDarkMode),
-      ],
-    );
-  }
-
-  Widget _buildReportsList(bool isDarkMode) {
-    if (_userReports.isEmpty) return const Center(child: Text('Tiada laporan lagi.'));
-    return ListView.separated(
-      shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: _userReports.length > 3 ? 3 : _userReports.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final r = _userReports[index];
-        return Card(
-          elevation: 0, color: Colors.grey.withOpacity(0.1),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          child: ListTile(title: Text(r.category, style: const TextStyle(fontWeight: FontWeight.bold)), subtitle: Text(r.areaName ?? '-'), onTap: () => _navigateToEdit(r)),
-        );
-      },
-    );
-  }
-
   void _showAvatarEditOptions() {
     showModalBottomSheet(context: context, builder: (context) => Column(mainAxisSize: MainAxisSize.min, children: [
       ListTile(leading: const Icon(Icons.photo_library), title: const Text('Galeri'), onTap: () { Navigator.pop(context); _updateAvatarFromGallery(); }),
@@ -384,7 +380,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (image != null) {
       setState(() => _isLoading = true);
       try {
-        final url = await _supabaseService.uploadImage(File(image.path), applyWatermark: false);
+        final url = await _supabaseService.uploadImage(File(image.path));
         await Supabase.instance.client.auth.updateUser(UserAttributes(data: {'avatar_url': url}));
         await _deviceService.updateAvatar(url); _loadData();
       } catch (e) { debugPrint('$e'); } finally { setState(() => _isLoading = false); }
@@ -403,7 +399,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildInlineEditForm(bool isDarkMode) {
     return Column(children: [
       const SizedBox(height: 20),
-      _buildTextField(_nickCtrl, Icons.alternate_email, 'Nickname'),
+      _buildTextField(_userCtrl, Icons.alternate_email, 'Username'), // Tukar label
       _buildTextField(_phoneCtrl, Icons.phone, 'No Telefon'),
       const SizedBox(height: 10),
       ElevatedButton(onPressed: _saveProfileInline, style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryRed), child: const Text('Simpan', style: TextStyle(color: Colors.white))),
@@ -415,33 +411,87 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _saveProfileInline() async {
+    final newUsername = _userCtrl.text.trim();
+    if (newUsername.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Username tidak boleh kosong')));
+      return;
+    }
+
     setState(() => _isLoading = true);
-    final error = await _deviceService.updateNickname(_nickCtrl.text);
-    if (error != null) { setState(() => _isLoading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error))); return; }
-    try { await Supabase.instance.client.auth.updateUser(UserAttributes(data: {'nickname': _nickCtrl.text, 'phone': _phoneCtrl.text})); setState(() => _isEditingMode = false); _loadData(); }
-    catch (e) { setState(() => _isLoading = false); }
+
+    try {
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+
+      if (user != null) {
+        // 1. Semak keunikan Username (kecuali jika ia adalah username sendiri)
+        final existing = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('username', newUsername)
+            .maybeSingle();
+
+        if (existing != null && existing['id'] != user.id) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Username ini sudah digunakan. Sila pilih yang lain.'))
+          );
+          return;
+        }
+
+        // 2. Kemaskini di jadual 'profiles' (konsisten dengan UsernameSetupScreen)
+        await supabase.from('profiles').upsert({
+          'id': user.id,
+          'username': newUsername,
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+
+        // 3. Kemaskini di jadual 'device_users'
+        final error = await _deviceService.updateNickname(newUsername);
+        if (error != null) throw error;
+
+        // 4. Kemaskini Metadata Auth & Telefon
+        await supabase.auth.updateUser(UserAttributes(data: {
+          'username': newUsername,
+          'phone': _phoneCtrl.text.trim()
+        }));
+
+        if (mounted) {
+          setState(() {
+            _isEditingMode = false;
+            _isLoading = false;
+          });
+          _loadData();
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profil berjaya dikemaskini!')));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal mengemaskini: $e')));
+      }
+    }
   }
+
 
   void _navigateToMyReports() { Navigator.push(context, MaterialPageRoute(builder: (context) => Scaffold(appBar: AppBar(title: const Text('Laporan Saya'), backgroundColor: AppTheme.primaryRed, foregroundColor: Colors.white), body: SingleChildScrollView(padding: const EdgeInsets.all(20), child: _buildReportsList(Theme.of(context).brightness == Brightness.dark))))); }
   void _navigateToVerificationForm() { Navigator.push(context, MaterialPageRoute(builder: (context) => const VerificationApplicationScreen())).then((_) => _loadData()); }
   void _navigateToEdit(AssaffalReport r) { Navigator.push(context, MaterialPageRoute(builder: (context) => EditReportScreen(report: r))).then((_) => _loadData()); }
 
-  Future<void> _handleLogout() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Logout?'),
-        content: const Text('Adakah anda pasti mahu keluar?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Ya', style: TextStyle(color: Colors.red))),
-        ],
-      ),
+  Widget _buildReportsList(bool isDarkMode) {
+    if (_userReports.isEmpty) return const Center(child: Text('Tiada laporan lagi.'));
+    return ListView.separated(
+      shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: _userReports.length > 3 ? 3 : _userReports.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        final r = _userReports[index];
+        return Card(
+          elevation: 0, color: Colors.grey.withOpacity(0.1),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          child: ListTile(title: Text(r.category, style: const TextStyle(fontWeight: FontWeight.bold)), subtitle: Text(r.areaName ?? '-'), onTap: () => _navigateToEdit(r)),
+        );
+      },
     );
-    if (confirm == true) {
-      await _authService.signOut();
-      _loadData();
-    }
   }
 
   Widget _buildNotLoggedInState(bool isDarkMode) {
@@ -449,54 +499,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showImpactBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Theme.of(context).brightness == Brightness.dark ? AppTheme.darkBackground : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
-            const SizedBox(height: 24),
-            const Text('Impak Komuniti Anda', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 24),
-            _buildImpactSection(Theme.of(context).brightness == Brightness.dark),
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
-    );
+    showModalBottomSheet(context: context, backgroundColor: Colors.transparent, isScrollControlled: true, builder: (context) => Container(padding: const EdgeInsets.all(24), decoration: BoxDecoration(color: Theme.of(context).brightness == Brightness.dark ? AppTheme.darkBackground : Colors.white, borderRadius: const BorderRadius.vertical(top: Radius.circular(30))), child: Column(mainAxisSize: MainAxisSize.min, children: [Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))), const SizedBox(height: 24), const Text('Impak Komuniti Anda', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)), const SizedBox(height: 24), _buildImpactSection(Theme.of(context).brightness == Brightness.dark), const SizedBox(height: 24)])));
   }
 
   void _showVerificationBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Theme.of(context).brightness == Brightness.dark ? AppTheme.darkBackground : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
-            const SizedBox(height: 24),
-            const Text('Status & Kelayakan User', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 24),
-            _buildVerificationProgress(Theme.of(context).brightness == Brightness.dark),
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
-    );
+    showModalBottomSheet(context: context, backgroundColor: Colors.transparent, isScrollControlled: true, builder: (context) => Container(padding: const EdgeInsets.all(24), decoration: BoxDecoration(color: Theme.of(context).brightness == Brightness.dark ? AppTheme.darkBackground : Colors.white, borderRadius: const BorderRadius.vertical(top: Radius.circular(30))), child: Column(mainAxisSize: MainAxisSize.min, children: [Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))), const SizedBox(height: 24), const Text('Status & Kelayakan', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)), const SizedBox(height: 24), _buildVerificationProgress(Theme.of(context).brightness == Brightness.dark), const SizedBox(height: 24)])));
   }
 }

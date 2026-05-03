@@ -116,44 +116,50 @@ class _InAppCameraScreenState extends State<InAppCameraScreen> with WidgetsBindi
     img.Image? originalImage = img.decodeImage(imageBytes);
     if (originalImage == null) return imageFile;
 
-    // Load Logo dari Assets
+    // 1. Letak Logo di TENGAH
     ByteData logoData = await rootBundle.load('assets/images/logo_s_assaffal.png');
     img.Image? logo = img.decodeImage(logoData.buffer.asUint8List());
 
     if (logo != null) {
-      // Kecilkan logo jika perlu (contoh 15% dari lebar gambar)
-      int logoWidth = (originalImage.width * 0.15).toInt();
+      int logoWidth = (originalImage.width * 0.30).toInt();
       img.Image resizedLogo = img.copyResize(logo, width: logoWidth);
 
-      // Letak logo di tengah-tengah
       int posX = (originalImage.width - resizedLogo.width) ~/ 2;
       int posY = (originalImage.height - resizedLogo.height) ~/ 2;
 
+      // Lukis Logo
       img.compositeImage(originalImage, resizedLogo, dstX: posX, dstY: posY);
+
+      // 2. Teks Metadata (Tarikh, Koordinat, Username) diletakkan di TENGAH (Bawah Logo)
+      String dateStr = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+      String locStr = pos != null
+          ? '${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)}'
+          : 'Lokasi tidak dikesan';
+      String username = _authService.currentUser?.userMetadata?['username'] ?? 'User';
+
+      List<String> lines = [dateStr, locStr, username];
+      int currentY = posY + resizedLogo.height + 20; // 20 pixel di bawah logo
+
+      for (String line in lines) {
+        // Kira posisi X supaya teks berada di tengah secara mendatar
+        int estimatedWidth = (line.length * 13).toInt(); // Anggaran lebar fon arial24
+        int textX = (originalImage.width - estimatedWidth) ~/ 2;
+
+        // Shadow Hitam
+        img.drawString(originalImage, line, font: img.arial24, x: textX + 2, y: currentY + 2, color: img.ColorRgb8(0, 0, 0));
+        // Teks Putih
+        img.drawString(originalImage, line, font: img.arial24, x: textX, y: currentY, color: img.ColorRgb8(255, 255, 255));
+
+        currentY += 35; // Jarak baris
+      }
     }
 
-    // Siapkan Teks (Tarikh, Koordinat, Nickname)
-    String dateStr = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
-    String locStr = pos != null ? '${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)}' : 'Lokasi tidak dikesan';
-    String nickname = _authService.currentUser?.userMetadata?['nickname'] ?? 'User';
-    String infoText = '$dateStr | $locStr | $nickname';
-
-    // Lukis Teks di bahagian bawah kiri
-    img.drawString(
-      originalImage,
-      infoText,
-      font: img.arial24,
-      x: 20,
-      y: originalImage.height - 50,
-      color: img.ColorRgb8(255, 255, 255),
-    );
-
-    // Simpan fail baru
+    // Simpan fail hasil
     final tempDir = await getTemporaryDirectory();
     final String watermarkedPath = '${tempDir.path}/wm_${DateTime.now().millisecondsSinceEpoch}.jpg';
     final File watermarkedFile = File(watermarkedPath);
     await watermarkedFile.writeAsBytes(img.encodeJpg(originalImage, quality: 90));
-    
+
     return watermarkedFile;
   }
 
